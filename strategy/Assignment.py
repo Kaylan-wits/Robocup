@@ -99,3 +99,4 @@ def role_assignment(teammate_positions, formation_positions):
         
         point_preferences[player_unum] = assigned_position
 
+    return point_preferences
