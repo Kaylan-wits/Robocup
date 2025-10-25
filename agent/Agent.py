@@ -326,36 +326,4 @@ class Agent(Base_Agent):
 
     #--------------------------------------- Fat proxy auxiliary methods
 
-    def fat_proxy_kick(self):
-        w = self.world
-        r = self.world.robot 
-        ball_2d = w.ball_abs_pos[:2]
-        my_head_pos_2d = r.loc_head_position[:2]
-
-        if np.linalg.norm(ball_2d - my_head_pos_2d) < 0.25:
-            # fat proxy kick arguments: power [0,10]; relative horizontal angle [-180,180]; vertical angle [0,70]
-            self.fat_proxy_cmd += f"(proxy kick 10 {M.normalize_deg( self.kick_direction  - r.imu_torso_orientation ):.2f} 20)" 
-            self.fat_proxy_walk = np.zeros(3) # reset fat proxy walk
-            return True
-        else:
-            self.fat_proxy_move(ball_2d-(-0.1,0), None, True) # ignore obstacles
-            return False
-
-
-    def fat_proxy_move(self, target_2d, orientation, is_orientation_absolute):
-        r = self.world.robot
-
-        target_dist = np.linalg.norm(np.array(target_2d) - r.loc_head_position[:2])
-        target_dir = M.target_rel_angle(r.loc_head_position[:2], r.imu_torso_orientation, target_2d)
-
-        if target_dist > 0.1 and abs(target_dir) < 8:
-            self.fat_proxy_cmd += (f"(proxy dash {100} {0} {0})")
-            return
-
-        if target_dist < 0.1:
-            if is_orientation_absolute:
-                orientation = M.normalize_deg( orientation - r.imu_torso_orientation )
-            target_dir = np.clip(orientation, -60, 60)
-            self.fat_proxy_cmd += (f"(proxy dash {0} {0} {target_dir:.1f})")
-        else:
-            self.fat_proxy_cmd += (f"(proxy dash {20} {0} {target_dir:.1f})")
+ 
