@@ -1,63 +1,108 @@
 import numpy as np
 
-# --- Offensive Formation (Renamed from Basic) ---
+def GenerateOffense(strategyData):
+    """
+    Generates dynamic offensive positions based on ball position.
+    This keeps the team structure but shifts it with the play.
+    """
+    ball_x = strategyData.ball_2d[0]
+    ball_y = strategyData.ball_2d[1]
+
+    # Create a "neutral" x-position for the formation, clamped to our half
+    # We want our formation to be "behind" the ball to support an attack
+    base_x = np.clip(ball_x - 3.0, -14.0, 5.0) 
+    
+    # Shift y-positions to follow the ball, but less aggressively
+    base_y = ball_y * 0.5 
+
+    positions = {
+        # (Role: [X_offset, Y_offset])
+        # Goalie is static
+        1: (-14, 0),  
+        # Defenders push up with the play, but not too far
+        2: (np.clip(base_x + 3, -13, 0), base_y + 5), 
+        3: (np.clip(base_x + 3, -13, 0), base_y - 5),
+        4: (np.clip(base_x + 2, -13, 0), base_y),      
+        # Mids shift with the ball
+        5: (base_x + 8, base_y + 6),
+        6: (base_x + 8, base_y),
+        7: (base_x + 8, base_y - 6),
+        # Attackers stay ahead, creating space
+        8: (base_x + 13, base_y + 7),
+        9: (base_x + 13, base_y),
+        10: (base_x + 13, base_y - 7),
+        # Cherry Picker stays high, but shifts side-to-side
+        11: (10, np.clip(ball_y, -5, 5)) 
+    }
+
+    # Clamp all positions to be on the field
+    for unum, (x, y) in positions.items():
+        positions[unum] = (np.clip(x, -15.0, 15.0), np.clip(y, -10.0, 10.0))
+
+    return positions
+
+def GenerateDefense(strategyData):
+    """
+    Generates dynamic defensive positions.
+    Focuses on getting between the ball and the goal (ball-marking).
+    """
+    ball_pos = strategyData.ball_2d
+    goal_pos = strategyData.own_goal_pos # (-15.5, 0)
+    
+    positions = {}
+    
+    # Goalie
+    positions[1] = (-14, np.clip(ball_pos[1], -1.5, 1.5)) # Cover goal angle
+
+    # Create defensive line X-positions
+    # We want the line to be between the ball and goal
+    # If ball is deep, line is deep. If ball is mid, line is mid.
+    def_x_line = np.clip(ball_pos[0] - 2.0, -13.0, 0.0)
+
+    # Defenders (2, 3, 4) form a line that blocks the ball
+    positions[4] = (def_x_line, ball_pos[1]) # Closest defender marks ball y
+    positions[2] = (def_x_line, ball_pos[1] + 4.0) # Side defender
+    positions[3] = (def_x_line, ball_pos[1] - 4.0) # Side defender
+    
+    # Midfielders (5, 6, 7) form a second line
+    mid_x_line = np.clip(ball_pos[0] + 1.0, -10.0, 5.0)
+    positions[6] = (mid_x_line, ball_pos[1]) # Center mid
+    positions[5] = (mid_x_line, ball_pos[1] + 5.0) # Side mid
+    positions[7] = (mid_x_line, ball_pos[1] - 5.0) # Side mid
+
+    # Attackers (8, 9, 10) drop back to cover passes
+    att_x_line = np.clip(ball_pos[0] + 4.0, -5.0, 8.0)
+    positions[9] = (att_x_line, ball_pos[1])
+    positions[8] = (att_x_line, ball_pos[1] + 6.0)
+    positions[10] = (att_x_line, ball_pos[1] - 6.0)
+
+    # Cherry Picker (11) drops back to midfield
+    positions[11] = (5, ball_pos[1])
+    
+    # Clamp all positions to be on the field
+    for unum, (x, y) in positions.items():
+        positions[unum] = (np.clip(x, -15.0, 15.0), np.clip(y, -10.0, 10.0))
+
+    return positions
+
+# This is the old function, which we are no longer using.
+# You can delete it, but I'm leaving it here for reference.
 def GeneratePlayOn():
-    # Keep the same basic offensive formation points 
-    # (Using 11 points from amaan-hans init_pos for consistency)
-     return { 
-        1: np.array([-14, 0]), 
-        2: np.array([-9, -5]), 
-        3: np.array([-9, 0]), 
-        4: np.array([-9, 5]), 
-        5: np.array([-5, -5]), 
-        6: np.array([-5, 0]), 
-        7: np.array([-5, 5]), 
-        8: np.array([-2, -6]), 
-        9: np.array([-2, -2.5]), 
-        10: np.array([-2, 2.5]), 
-        11: np.array([-2, 6]) # Note: Cherry Picker (11) will ignore this in Agent.py
-    }
-
-# --- Defensive Formation (from muzzaam/test34) ---
-def GenerateDefense(opponent_positions):
     """
-    Generates defensive positions based on opponent locations.
-    Tries to mark the closest opponents. Simple version.
+    Generates static 'Play On' positions.
+    --- THIS IS DEPRECATED ---
     """
-    num_opponents = sum(1 for pos in opponent_positions if pos is not None)
-    
-    # Basic defensive shell, slightly deeper than offensive midfield
-    defense_positions = {
-        1: np.array([-14, 0]),     # Goalie stays put
-        2: np.array([-10, -4]),    # Left Back
-        3: np.array([-11, 0]),     # Center Back
-        4: np.array([-10, 4]),     # Right Back
-        5: np.array([-6, -5]),     # Left Mid Defensive
-        6: np.array([-7, 0]),      # Center Mid Defensive
-        7: np.array([-6, 5]),      # Right Mid Defensive
-        8: np.array([-3, -3]),     # Forward trying to track back
-        9: np.array([-4, 0]),      # Forward trying to track back
-        10: np.array([-3, 3]),     # Forward trying to track back
-        11: np.array([-1, 0])      # Cherry picker tracks back slightly
+    positions = {
+        1: (-14, 0),  # Goalie
+        2: (-11, 4),  # Defender
+        3: (-11, -4), # Defender
+        4: (-11, 0),  # Defender
+        5: (-5, -5),  # Mid
+        6: (-5, 0),   # Mid
+        7: (-5, 5),   # Mid
+        8: (-1, -6),  # Attacker
+        9: (-1, -2.5),# Attacker
+        10: (-1, 2.5),# Attacker
+        11: (10, 0)   # Cherry Picker
     }
-    
-    # --- Simple Marking Logic (Optional Enhancement) ---
-    # Could add logic here to adjust defender positions (2,3,4) 
-    # to be closer to the nearest opponents if desired.
-    # For now, just return the static defensive shell.
-    # Example: Find 3 closest opponents and assign defenders 2, 3, 4 to shadow them.
-    # Requires more complex assignment logic.
-
-    return defense_positions
-
-# --- Keep GenerateBasicFormation if other parts of the code still use it ---
-# Or remove if GeneratePlayOn fully replaces it.
-def GenerateBasicFormation():
-     """ Original basic formation - keep for reference or if needed elsewhere"""
-     return { 
-        1: np.array([-13, 0]), 
-        2: np.array([-7, -2]), 
-        3: np.array([0, 3]), 
-        4: np.array([7, 1]), 
-        5: np.array([12, 0]) 
-    }
+    return positions

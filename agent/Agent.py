@@ -6,7 +6,9 @@ import numpy as np
 # Import necessary functions from other files
 from strategy.Assignment import role_assignment, pass_reciever_selector
 from strategy.Strategy import Strategy
-from formation.Formation import GeneratePlayOn, GenerateDefense # Make sure GenerateDefense is added
+# --- UPDATED IMPORTS ---
+from formation.Formation import GenerateOffense, GenerateDefense 
+# -----------------------
 
 class Agent(Base_Agent):
     def __init__(self, host:str, agent_port:int, monitor_port:int, unum:int,
@@ -264,33 +266,28 @@ class Agent(Base_Agent):
         startat_tuple = strategyData.point_in_direction(ball_pos, aim, -0.25)
         startat = np.array(startat_tuple) if startat_tuple is not None else ball_pos # Fallback
 
-        # --- Alignment Phase ---
+        # --- SIMPLIFIED Alignment Phase ---
         current_dist_to_startat = np.linalg.norm(position - startat)
+        aim_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(aim)
+        alignment_tolerance = 0.3 # How close to 'startat' we need to be
+        collinear_tolerance = 0.35 # How collinear we need to be
 
-        if current_dist_to_startat > 0.7:
-            nav_target_tuple = strategyData.next_position_to_startat(aim, ball_pos, position, startat)
-            nav_target = np.array(nav_target_tuple) if nav_target_tuple is not None else startat # Fallback
-
-            strategyData.my_desired_position = tuple(nav_target) # move expects tuple
-            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(nav_target)
-            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=True)
-
-        elif not strategyData.are_points_collinear(position, ball_pos, aim, tolerance=0.3):
-            strategyData.my_desired_position = tuple(startat) # move expects tuple
-            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(startat)
-            # Correct indentation for the return statement below
+        # If not aligned (not collinear OR too far from 'startat' point)
+        if current_dist_to_startat > alignment_tolerance or not strategyData.are_points_collinear(position, ball_pos, aim, tolerance=collinear_tolerance):
+            strategyData.my_desired_position = tuple(startat) # Always aim for the startat point
+            strategyData.my_desired_orientation = aim_orientation # Always face the kick target
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=True)
            
         # --- Dribble/Push Phase ---
-        # Ensure ball_dist is calculated correctly (using current position)
+        # If we are here, we are aligned and ready to push
         current_ball_dist = np.linalg.norm(position - ball_pos)
 
-        if current_ball_dist > 0.25:
+        if current_ball_dist > 0.25: # Need to get closer to ball
             strategyData.my_desired_position = tuple(ball_pos) # move expects tuple
-            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(aim)
+            strategyData.my_desired_orientation = aim_orientation
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=True)
 
-        else:
+        else: # Close enough to ball, push through it
             # --- MODIFIED FOR PROXY ---
             # If we are in proxy mode, use the proxy_kick command instead of pushing
             if self.fat_proxy_cmd is not None:
@@ -307,9 +304,8 @@ class Agent(Base_Agent):
             towards = np.array(towards_tuple) if towards_tuple is not None else aim # Fallback
 
             strategyData.my_desired_position = tuple(towards) # move expects tuple
-            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(aim)
+            strategyData.my_desired_orientation = aim_orientation
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=False)
-
 
 
     def select_skill(self, strategyData):
@@ -330,65 +326,42 @@ class Agent(Base_Agent):
         # Check opponent positions safely
         valid_opponents_exist = strategyData.opponent_positions and any(p is not None for p in strategyData.opponent_positions)
 
+        # --- UPDATED TO USE strategyData ---
         if valid_opponents_exist and strategyData.min_opponent_ball_dist + 0.3 < strategyData.min_teammate_ball_dist:
-             formation_positions = GenerateDefense(strategyData.opponent_positions)
+             formation_positions = GenerateDefense(strategyData)
              is_defending = True
         else:
-             formation_positions = GeneratePlayOn()
+             formation_positions = GenerateOffense(strategyData)
+        # ------------------------------------
 
         # Perform role assignment based on the chosen formation
         point_preferences = role_assignment(strategyData.teammate_positions, formation_positions)
         my_formation_spot = point_preferences.get(MyNum, self.init_pos) # Get assigned spot, fallback to init_pos
 
 
-        # --- Tactical Foul Logic Placeholder ---
-        # Condition: Opponent has ball, is close to our goal, and we are not the closest teammate
-        should_consider_foul = False
-        if valid_opponents_exist and is_defending and MyNum != active_player:
-             # Find closest opponent to our goal
-             min_opp_goal_dist_sq = float('inf')
-             threatening_opp_pos = None
-             for opp_pos in strategyData.opponent_positions:
-                 if opp_pos is not None:
-                     dist_sq = np.sum((np.array(opp_pos) - our_goal_center_np)**2)
-                     if dist_sq < min_opp_goal_dist_sq:
-                         min_opp_goal_dist_sq = dist_sq
-                         threatening_opp_pos = opp_pos
-
-             # If an opponent is very close to goal (e.g., within 5 meters)
-             if threatening_opp_pos is not None and min_opp_goal_dist_sq < 5**2:
-                 # Check if *that* opponent is also the one closest to the ball (likely attacker)
-                 if np.linalg.norm(np.array(threatening_opp_pos) - ball_pos) < strategyData.min_opponent_ball_dist + 0.5:
-                     should_consider_foul = True
-
-
-        if should_consider_foul:
-            # Find an opponent far from the ball and far from our goal to foul
-            best_foul_target = None
-            max_dist_from_ball = 0
-            for opp_pos_orig in strategyData.opponent_positions:
-                 if opp_pos_orig is not None:
-                     opp_pos = np.array(opp_pos_orig)
-                     dist_to_ball = np.linalg.norm(opp_pos - ball_pos)
-                     dist_to_our_goal = np.linalg.norm(opp_pos - our_goal_center_np)
-                     # Target opponent far from ball (>5m) and not too close to our goal (>10m)
-                     if dist_to_ball > 5.0 and dist_to_our_goal > 10.0:
-                         if dist_to_ball > max_dist_from_ball: # Pick the one furthest from ball
-                             max_dist_from_ball = dist_to_ball
-                             best_foul_target = opp_pos
-
-            # If a suitable foul target exists and I am reasonably close to them
-            if best_foul_target is not None and np.linalg.norm(position_np - best_foul_target) < 4.0:
-                 # print(f"Player {MyNum}: Attempting tactical foul on opponent at {best_foul_target}")
-                 # Move aggressively towards the back of the target opponent
-                 # Calculate point slightly behind the target
-                 foul_move_target = strategyData.point_in_direction(best_foul_target, position_np, 0.5) # Aim behind them
-                 if foul_move_target:
-                     return self.move(tuple(foul_move_target), orientation=None, avoid_obstacles=False, is_aggressive=True)
-                 # Else: fallback to normal behavior if calculation fails
+        # --- Tactical Foul Logic Removed ---
 
 
         # --- Role-Based Logic ---
+        
+        # --- POSITIONING LOGIC (Used by all roles when not active) ---
+        def move_to_spot(spot, face_target):
+            """
+            Helper function for non-active player positioning.
+            FIXES "TURNING BACKS" PROBLEM.
+            """
+            target_pos = tuple(spot)
+            face_target_pos = np.array(face_target)
+            target_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(face_target_pos)
+            dist_to_spot = np.linalg.norm(position_np - np.array(spot))
+
+            # If far from spot, face movement direction (orientation=None)
+            # If close to spot (e.g., < 0.5m), face the ball/target
+            final_orientation = target_orientation if dist_to_spot < 0.5 else None
+            
+            return self.move(target_pos, orientation=final_orientation, avoid_obstacles=True)
+        # --- END HELPER ---
+
 
         # 1. GOALIE LOGIC (Player 1)
         if my_role == 'GOALIE':
@@ -408,24 +381,17 @@ class Agent(Base_Agent):
                  strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
                  return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=False)
             else:
-                 # Return to rest pos, face ball
-                 strategyData.my_desired_position = tuple(goalie_rest_pos)
-                 strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
-                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
+                 # Return to rest pos (dynamic spot from formation)
+                 return move_to_spot(my_formation_spot, ball_pos)
 
         # 2. CHERRY-PICKER LOGIC (Player 11)
         elif my_role == 'CHERRY_PICKER':
-            # Ensure cherry_pick_spot is a tuple for move command
-            cherry_pick_spot = (14, 0)
-
             if active_player == MyNum:
                  # Shoot using newKickdef
                  return self.newKickdef(strategyData, MyNum, position_np, ball_pos, goal_target_np)
             else:
                  # Go to spot, face ball
-                 strategyData.my_desired_position = cherry_pick_spot
-                 strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
-                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=True)
+                 return move_to_spot(my_formation_spot, ball_pos)
 
         # 3. DEFENDER LOGIC (Players 2, 3, 4)
         elif my_role == 'DEFENDER':
@@ -437,9 +403,7 @@ class Agent(Base_Agent):
                  return self.newKickdef(strategyData, MyNum, position_np, ball_pos, pass_aim)
             else:
                  # Go to assigned formation spot
-                 strategyData.my_desired_position = tuple(my_formation_spot)
-                 strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
-                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
+                 return move_to_spot(my_formation_spot, ball_pos)
 
         # 4. MIDFIELDER LOGIC (Players 5, 6, 7, 8, 9, 10)
         elif my_role == 'MIDFIELDER':
@@ -457,16 +421,12 @@ class Agent(Base_Agent):
                  return self.newKickdef(strategyData, MyNum, position_np, ball_pos, pass_aim)
             else:
                  # Go to assigned formation spot
-                 strategyData.my_desired_position = tuple(my_formation_spot)
-                 strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
-                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
+                 return move_to_spot(my_formation_spot, ball_pos)
 
         # Fallback if role is undefined
         else:
              # Default to moving to formation spot
-             strategyData.my_desired_position = tuple(my_formation_spot)
-             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
-             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
+             return move_to_spot(my_formation_spot, ball_pos)
 
 
     # --- ADDED FAT PROXY METHODS ---
