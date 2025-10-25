@@ -3,356 +3,494 @@ from math_ops.Math_Ops import Math_Ops as M
 import math
 import numpy as np
 
-# Updated imports
-from strategy.Assignment import role_assignment
-from strategy.Assignment import pass_reciever_selector # Added from muzzaam/test34
-from strategy.Strategy import Strategy 
-
-# Updated imports
-from formation.Formation import GeneratePlayOn # Renamed from GenerateBasicFormation
-from formation.Formation import GenerateDefense # Added from muzzaam/test34
-
+# Import necessary functions from other files
+from strategy.Assignment import role_assignment, pass_reciever_selector
+from strategy.Strategy import Strategy
+from formation.Formation import GeneratePlayOn, GenerateDefense # Make sure GenerateDefense is added
 
 class Agent(Base_Agent):
     def __init__(self, host:str, agent_port:int, monitor_port:int, unum:int,
                  team_name:str, enable_log, enable_draw, wait_for_server=True, is_fat_proxy=False) -> None:
-        
-        robot_type = (0,1,1,1,2,3,3,3,4,4,4)[unum-1] # Using 11 player numbers from amaan-hans
 
+        # define robot type - Assuming 11 players for role assignment
+        # If running with 5, ensure roles in Strategy.py only use 1-5
+        robot_type = (0,1,1,1,2,3,3,3,4,4,4)[unum-1] if unum <= 11 else 0 # Default type if unum > 11
+
+        # Initialize base agent
         super().__init__(host, agent_port, monitor_port, unum, robot_type, team_name, enable_log, enable_draw, True, wait_for_server, None)
 
         self.enable_draw = enable_draw
-        self.state = 0
+        self.state = 0  # 0-Normal, 1-Getting up
+        # Removed kicking state as newKickdef handles movement
+
+        # --- ADDED FROM PROXY VERSION ---
         self.kick_direction = 0
         self.kick_distance = 0
         self.fat_proxy_cmd = "" if is_fat_proxy else None
-        self.fat_proxy_walk = np.zeros(3) 
+        self.fat_proxy_walk = np.zeros(3) # filtered walk parameters for fat proxy
+        # --------------------------------
 
-        # Using 11 player initial positions from amaan-hans
-        self.init_pos = ([-14,0],[-9,-5],[-9,0],[-9,5],[-5,-5],[-5,0],[-5,5],[-2,-6],[-2,-2.5],[-2,2.5],[-2,6])[unum-1]
+        # Initial positions for an 11-player setup (adjust if using 5)
+        # Based roughly on amaan-hans and muzzaam/test34 initial positions
+        self.init_pos = (
+            [-14,0], [-11,4], [-11,-4], [-11, 0], # Goalie, 3 Defenders
+            [-5,-5], [-5, 0], [-5, 5],           # 3 Midfielders
+            [-1,-6], [-1,-2.5], [-1,2.5],        # 3 Attackers/Wingers
+            [10, 0]                              # Cherry Picker (adjust X as needed)
+        )[unum-1] if unum <= 11 else [-1, 0]     # Default pos if unum > 11
 
 
     def beam(self, avoid_center_circle=False):
-        # (Beam logic remains mostly the same as baseline)
         r = self.world.robot
-        pos = self.init_pos[:] 
+        # Ensure init_pos is treated as a mutable list for modification
+        pos = list(self.init_pos[:]) # copy position list
         self.state = 0
 
+        # Avoid center circle by moving the player back
         if avoid_center_circle and np.linalg.norm(self.init_pos) < 2.5:
-            pos[0] = -2.3 
+             # Check if pos has at least one element before modifying
+            if len(pos) > 0:
+                pos[0] = -2.3
 
-        if np.linalg.norm(pos - r.loc_head_position[:2]) > 0.1 or self.behavior.is_ready("Get_Up"):
-            self.scom.commit_beam(pos, M.vector_angle((-pos[0],-pos[1]))) 
+        # Convert pos back to tuple for beam function if needed, or ensure beam accepts list
+        beam_pos_tuple = tuple(pos)
+
+        # Ensure loc_head_position exists before calculating norm
+        current_pos_2d = r.loc_head_position[:2] if r.loc_head_position is not None else np.array([0,0])
+
+        if np.linalg.norm(np.array(beam_pos_tuple) - current_pos_2d) > 0.1 or self.behavior.is_ready("Get_Up"):
+             # Beam facing center (0,0) - adjust angle calculation if pos can be empty
+            angle = M.vector_angle((-beam_pos_tuple[0], -beam_pos_tuple[1])) if len(beam_pos_tuple) >= 2 else 0
+            self.scom.commit_beam(beam_pos_tuple, angle)
         else:
-            if self.fat_proxy_cmd is None:
+            # --- MODIFIED FOR PROXY ---
+            if self.fat_proxy_cmd is None: # normal behavior
                 self.behavior.execute("Zero_Bent_Knees_Auto_Head")
-            else: 
+            else: # fat proxy behavior
                 self.fat_proxy_cmd += "(proxy dash 0 0 0)"
-                self.fat_proxy_walk = np.zeros(3)
+                self.fat_proxy_walk = np.zeros(3) # reset fat proxy walk
+            # --------------------------
 
 
     def move(self, target_2d=(0,0), orientation=None, is_orientation_absolute=True,
              avoid_obstacles=True, priority_unums=[], is_aggressive=False, timeout=3000):
-        # (Move logic remains the same as baseline)
-        r = self.world.robot
-        if self.fat_proxy_cmd is not None: 
-            self.fat_proxy_move(target_2d, orientation, is_orientation_absolute)
+        
+        # --- ADDED FROM PROXY VERSION ---
+        if self.fat_proxy_cmd is not None: # fat proxy behavior
+            self.fat_proxy_move(target_2d, orientation, is_orientation_absolute) # ignore obstacles
             return
+        # --------------------------------
+        
+        r = self.world.robot
+        # Ensure robot position is valid before proceeding
+        if r.loc_head_position is None:
+            # print(f"Player {self.world.robot.unum}: Cannot move, position unknown.")
+            return # Skip move if position unknown
+
+        current_pos_2d = r.loc_head_position[:2]
+        target_np = np.array(target_2d) # Ensure target is numpy array
+
+        # Basic check for valid target coordinates (e.g., within reasonable field bounds)
+        if not (-20 < target_np[0] < 20 and -15 < target_np[1] < 15):
+             # print(f"Player {self.world.robot.unum}: Invalid move target {target_np}, staying put.")
+             target_np = current_pos_2d # Stay put if target is invalid
+
+        distance_to_final_target = np.linalg.norm(target_np - current_pos_2d)
 
         if avoid_obstacles:
-            target_2d, _, distance_to_final_target = self.path_manager.get_path_to_target(
-                target_2d, priority_unums=priority_unums, is_aggressive=is_aggressive, timeout=timeout)
-        else:
-            distance_to_final_target = np.linalg.norm(target_2d - r.loc_head_position[:2])
+            # Path manager might return original target if pathfinding fails or times out
+            planned_target, _, distance_to_final_target_pf = self.path_manager.get_path_to_target(
+                target_np, priority_unums=priority_unums, is_aggressive=is_aggressive, timeout=timeout)
+            # Ensure planned_target is valid before using it
+            if planned_target is not None:
+                target_np = np.array(planned_target)
+                distance_to_final_target = distance_to_final_target_pf # Update distance based on pathfinding
+            # else: Keep original target_np if pathfinding returned None
 
-        self.behavior.execute("Walk", target_2d, True, orientation, is_orientation_absolute, distance_to_final_target)
+        # Ensure orientation is valid if provided
+        if orientation is not None:
+            orientation = M.normalize_deg(orientation) # Normalize angle
 
-    # Note: We are keeping kickTarget for compatibility, but primarily using newKickdef logic
-    def kickTarget(self, strategyData, mypos_2d=(0,0),target_2d=(0,0), abort=False, enable_pass_command=False):
-        # Simplified kickTarget - it will now mostly rely on the logic within newKickdef
-        # Calculate direction for compatibility if newKickdef needs it
-        vector_to_target = np.array(target_2d) - np.array(mypos_2d)
-        kick_direction = np.degrees(np.arctan2(vector_to_target[1], vector_to_target[0]))
+        # Execute walk - ensure target_np is tuple if required by behavior
+        self.behavior.execute("Walk", tuple(target_np), True, orientation, is_orientation_absolute, distance_to_final_target)
+
+
+    # kick and kickTarget are deprecated, use newKickdef for ball interactions
+    # Keep the stubs if other parts of the system might still call them initially
+    def kick(self, *args, **kwargs):
+        # print(f"Player {self.world.robot.unum}: Deprecated kick() called, use newKickdef()")
         
-        # --- Directly call the fast dribble/kick logic ---
-        return self.newKickdef(strategyData, strategyData.player_unum, mypos_2d, strategyData.ball_2d, tuple(target_2d))
+        # --- ADDED FOR PROXY (fallback) ---
+        if self.fat_proxy_cmd is not None:
+            self.kick_direction = 0 # Default aim forward
+            return self.fat_proxy_kick()
+        # ----------------------------------
+            
+        # Optionally, redirect to a basic move towards ball or do nothing
+        return self.move(self.world.ball_abs_pos[:2]) # Example: move towards ball
+
+    def kickTarget(self, *args, **kwargs):
+        # print(f"Player {self.world.robot.unum}: Deprecated kickTarget() called, use newKickdef()")
+         # Optionally, redirect to newKickdef with default aim
+        strategyData = kwargs.get('strategyData', Strategy(self.world)) # Get strategyData if passed
+        mypos_2d = kwargs.get('mypos_2d', strategyData.mypos)
+        target_2d = kwargs.get('target_2d', (15.5, 0)) # Default aim
+        
+        # --- ADDED FOR PROXY (in case stub is called) ---
+        if self.fat_proxy_cmd is not None:
+            vector_to_target = np.array(target_2d) - np.array(mypos_2d)
+            self.kick_distance = np.linalg.norm(vector_to_target)
+            direction_radians = np.arctan2(vector_to_target[1], vector_to_target[0])
+            self.kick_direction = np.degrees(direction_radians)
+            return self.fat_proxy_kick()
+        # ------------------------------------------------
+            
+        return self.newKickdef(strategyData, strategyData.player_unum, mypos_2d, strategyData.ball_2d, target_2d)
+
 
     def think_and_send(self):
         behavior = self.behavior
-        strategyData = Strategy(self.world)
+        # Ensure world object is valid before creating Strategy
+        if self.world is None or self.world.robot is None:
+             # print("World object not ready, skipping think cycle.")
+             # Send a minimal command (e.g., stand still) or just return
+             self.scom.commit_and_send( b"(he1 0)(he2 0)" ) # Example minimal command
+             return
+
+        try:
+             strategyData = Strategy(self.world)
+        except Exception as e:
+             # print(f"Error creating Strategy object: {e}")
+             self.scom.commit_and_send( b"(he1 0)(he2 0)" ) # Send minimal command on error
+             return
+
         d = self.world.draw
 
-        # --- Game Mode Logic ---
+        # --- Game State Logic ---
         if strategyData.play_mode == self.world.M_GAME_OVER:
             pass # Do nothing
         elif strategyData.PM_GROUP == self.world.MG_ACTIVE_BEAM:
             self.beam()
         elif strategyData.PM_GROUP == self.world.MG_PASSIVE_BEAM:
             self.beam(True) # avoid center circle
-        elif self.state == 1 or (behavior.is_ready("Get_Up") and self.fat_proxy_cmd is None):
-            self.state = 0 if behavior.execute("Get_Up") else 1 # Getting up state handling
         
-        # --- Set Piece Logic (from muzzaam/test34 & amaan-hans) ---
-        elif (strategyData.PM_GROUP == self.world.MG_THEIR_KICK): # If opponent has any kick
-            # All players go defensive
-            formation_positions = GenerateDefense(strategyData.opponent_positions)
-            point_preferences = role_assignment(strategyData.teammate_positions, formation_positions)
-            my_defensive_pos = point_preferences.get(strategyData.player_unum, self.init_pos) # Default to init_pos if assignment fails
-            self.move(my_defensive_pos, orientation=strategyData.ball_dir) # Go to defensive spot, face ball
-        
-        elif (strategyData.play_mode == self.world.M_OUR_KICKOFF):
-            # Aggressive kickoff: Player 10 passes forward immediately to player 9 (or cherry-picker if defined)
-            if strategyData.player_unum == 10: # Assuming player 10 takes kickoff
-                 # Find player 9's position, or default forward
-                 target_player_pos = strategyData.teammate_positions[8] if strategyData.teammate_positions[8] is not None else (5, 0) 
-                 # Use newKickdef for the kickoff pass/dribble
-                 self.newKickdef(strategyData, strategyData.player_unum, strategyData.mypos, strategyData.ball_2d, tuple(target_player_pos))
+        # --- MODIFIED FOR PROXY ---
+        elif self.state == 1 or (behavior.is_ready("Get_Up") and self.fat_proxy_cmd is None): # Check state first
+        # --------------------------
+            # Make sure Get_Up behavior exists and can be executed
+            if hasattr(behavior, 'execute') and callable(getattr(behavior, 'execute')):
+                 try:
+                     self.state = 0 if behavior.execute("Get_Up") else 1
+                 except Exception as e:
+                     # print(f"Error executing Get_Up: {e}")
+                     self.state = 0 # Assume recovered or reset state
             else:
-                 self.move(self.init_pos, orientation=strategyData.ball_dir) # Others hold position initially
+                 # print("Behavior object cannot execute Get_Up.")
+                 self.state = 0 # Reset state if behavior is problematic
+
+        # --- Set Piece / Defensive Logic ---
+        elif (strategyData.PM_GROUP == self.world.MG_THEIR_KICK): # Opponent's kick/corner/kickin etc.
+             # All players go to initial positions (defensive posture)
+             self.move(self.init_pos, orientation=strategyData.ball_dir)
+
+        elif (strategyData.play_mode == self.world.M_OUR_KICKOFF):
+             # Player 9 (example) takes kickoff - pass to cherry picker or shoot
+             if strategyData.player_unum == 9:
+                 cherry_picker_target = (10, 0) # Adjust based on actual cherry picker pos/role
+                 # Check if cherry picker exists and pass if possible
+                 cp_exists = len(strategyData.teammate_positions) > 10 and strategyData.teammate_positions[10] is not None
+                 pass_target = strategyData.teammate_positions[10] if cp_exists else (15, 0) # Pass or shoot
+                 self.newKickdef(strategyData, strategyData.player_unum, strategyData.mypos, strategyData.ball_2d, tuple(pass_target))
+             else: # Others hold position or move slightly
+                 self.move(self.init_pos, orientation=strategyData.ball_dir)
 
         elif (strategyData.play_mode == self.world.M_OUR_GOAL_KICK):
-             # Aggressive Goal Kick: Goalie (Player 1) tries to score directly
+             # Player 1 (Goalie) takes goal kick - long kick towards goal or cherry picker
              if strategyData.player_unum == 1:
-                 goal_target = (15.5, 0) # Opponent goal center
-                 self.newKickdef(strategyData, strategyData.player_unum, strategyData.mypos, strategyData.ball_2d, goal_target)
-             else:
-                 # Other players move to offensive formation spots
-                 formation_positions = GeneratePlayOn()
-                 point_preferences = role_assignment(strategyData.teammate_positions, formation_positions)
-                 my_offensive_pos = point_preferences.get(strategyData.player_unum, self.init_pos)
-                 self.move(my_offensive_pos, orientation=strategyData.ball_dir) # Go to spot, face ball
+                 cherry_picker_target = (10, 0) # Adjust
+                 cp_exists = len(strategyData.teammate_positions) > 10 and strategyData.teammate_positions[10] is not None
+                 kick_target = strategyData.teammate_positions[10] if cp_exists else (15.5, 0) # Aim for CP or goal center
+                 self.newKickdef(strategyData, strategyData.player_unum, strategyData.mypos, strategyData.ball_2d, tuple(kick_target))
+             else: # Others spread out
+                 self.move(self.init_pos, orientation=strategyData.ball_dir) # Simplified: just hold init pos
 
-        # --- Tactical Foul Logic ---
-        elif strategyData.should_commit_tactical_foul():
-            foul_target_opponent = strategyData.get_tactical_foul_target()
-            if foul_target_opponent is not None:
-                # Move aggressively into the back of the target opponent
-                # Calculate position slightly behind the opponent
-                foul_move_target = strategyData.point_in_direction(foul_target_opponent, strategyData.mypos, -0.5) 
-                self.move(foul_move_target, avoid_obstacles=False, is_aggressive=True)
-            else:
-                 # If no suitable target, fall back to normal play
-                 if strategyData.play_mode != self.world.M_BEFORE_KICKOFF:
-                    self.select_skill(strategyData)
-                 else:
-                     pass # Do nothing before kickoff
-        
-        # --- Default Play On Logic ---
+        # --- Normal Play Logic ---
+        elif strategyData.play_mode != self.world.M_BEFORE_KICKOFF:
+             self.select_skill(strategyData)
         else:
-            if strategyData.play_mode != self.world.M_BEFORE_KICKOFF:
-                self.select_skill(strategyData)
-            else:
-                pass # Do nothing before kickoff
+             pass # Before kickoff, do nothing or beam
 
-        self.radio.broadcast()
+        #--------------------------------------- 3. Broadcast
+        if hasattr(self.radio, 'broadcast'): # Check if radio object exists and has broadcast method
+             self.radio.broadcast()
 
-        if self.fat_proxy_cmd is None:
-            self.scom.commit_and_send( strategyData.robot_model.get_command() )
-        else: 
+        #--------------------------------------- 4. Send to server
+        # --- MODIFIED FOR PROXY ---
+        if self.fat_proxy_cmd is None: # normal behavior
+            command = b"(he1 0)(he2 0)" # Default minimal command
+            if hasattr(strategyData, 'robot_model') and hasattr(strategyData.robot_model, 'get_command'):
+                try:
+                    command = strategyData.robot_model.get_command()
+                except Exception as e:
+                    # print(f"Error getting command from robot model: {e}")
+                    pass # Use default command
+            self.scom.commit_and_send(command)
+        else: # fat proxy behavior
             self.scom.commit_and_send( self.fat_proxy_cmd.encode() ) 
             self.fat_proxy_cmd = ""
+        # --------------------------
 
-    # --- Fast Dribble Function (from amaan-hans) ---
+
+    # --- Fast Dribble Function (Refined) ---
     def newKickdef(self, strategyData, MyNum=0, position=(0,0), ball_pos=(0,0), aim=(15.5, 0)):
         """
-        Fast dribble/kick logic. Aligns behind the ball and moves through it.
+        Fast dribble/kick logic (Refined for stability and direction).
+        Aligns behind the ball and moves through it.
         Uses potential fields for obstacle avoidance if aiming far and opponent is close.
         """
+        # Ensure inputs are valid numpy arrays
+        position = np.array(position)
+        ball_pos = np.array(ball_pos)
+        aim = np.array(aim)
         goal = aim # Target location (pass or shot)
-        
+
         # Use potential fields to adjust aim if opponent is close and target is far
-        if strategyData.min_opponent_ball_dist < 1.5 and strategyData.distance(position, goal) > 5:
-             aim = strategyData.potential_fields_pathfinding(position, goal)
+        if strategyData.min_opponent_ball_dist < 1.5 and np.linalg.norm(goal - position) > 5:
+             potential_aim_tuple = strategyData.potential_fields_pathfinding(position, goal)
+             if potential_aim_tuple: # Check if it's not None
+                 aim = np.array(potential_aim_tuple) # Update aim only if valid
 
         # Calculate the position behind the ball, collinear with the aim point
-        startat = strategyData.point_in_direction(ball_pos, aim, -0.25) # Slightly adjust distance 
+        startat_tuple = strategyData.point_in_direction(ball_pos, aim, -0.25)
+        startat = np.array(startat_tuple) if startat_tuple is not None else ball_pos # Fallback
 
-        # If far from alignment spot, navigate around ball if necessary
-        if strategyData.distance(position, startat) > 0.6: # Increased distance threshold
-            startat = strategyData.next_position_to_startat(aim, ball_pos, position, startat)
-            # Move towards the calculated 'startat' position, facing the ball
-            strategyData.my_desired_position = tuple(startat)
-            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos) # Face ball while aligning
-            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=True) # Avoid obstacles when aligning
+        # --- Alignment Phase ---
+        current_dist_to_startat = np.linalg.norm(position - startat)
 
-        # If not collinear (within tolerance), move to the alignment spot 'startat'
-        elif not strategyData.are_points_collinear(position, ball_pos, aim, tolerance=0.5): # Increased tolerance
-            strategyData.my_desired_position = tuple(startat)
-            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos) # Face ball
+        if current_dist_to_startat > 0.7:
+            nav_target_tuple = strategyData.next_position_to_startat(aim, ball_pos, position, startat)
+            nav_target = np.array(nav_target_tuple) if nav_target_tuple is not None else startat # Fallback
+
+            strategyData.my_desired_position = tuple(nav_target) # move expects tuple
+            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(nav_target)
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=True)
 
-        # If collinear but still too far from the ball, move closer to the ball
-        elif strategyData.ball_dist > 0.35: # Slightly increased ball distance threshold
-            strategyData.my_desired_position = tuple(ball_pos)
-            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(aim) # Face target
-            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=True) # Avoid obstacles approaching ball
+        elif not strategyData.are_points_collinear(position, ball_pos, aim, tolerance=0.3):
+            strategyData.my_desired_position = tuple(startat) # move expects tuple
+            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(startat)
+            # Correct indentation for the return statement below
+            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=True)
+           
+        # --- Dribble/Push Phase ---
+        # Ensure ball_dist is calculated correctly (using current position)
+        current_ball_dist = np.linalg.norm(position - ball_pos)
 
-        # If collinear and close enough, execute the "fast dribble" by moving through the ball
-        else: 
-            # Calculate a point well beyond the target to ensure moving through the ball
-            towards = strategyData.point_in_direction(position, aim, 4) # Move 4m in the target direction
-            strategyData.my_desired_position = tuple(towards)
-            # Maintain orientation towards the final aim point
-            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(aim) 
-            # IMPORTANT: Disable obstacle avoidance to move through the ball
+        if current_ball_dist > 0.25:
+            strategyData.my_desired_position = tuple(ball_pos) # move expects tuple
+            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(aim)
+            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=True)
+
+        else:
+            # --- MODIFIED FOR PROXY ---
+            # If we are in proxy mode, use the proxy_kick command instead of pushing
+            if self.fat_proxy_cmd is not None:
+                # Calculate absolute kick direction for fat_proxy_kick
+                vector_to_target = aim - ball_pos # Use numpy arrays
+                direction_radians = np.arctan2(vector_to_target[1], vector_to_target[0])
+                self.kick_direction = np.degrees(direction_radians)
+                self.kick_distance = np.linalg.norm(vector_to_target)
+                return self.fat_proxy_kick()
+            # --- END PROXY MODIFICATION ---
+            
+            # Original push logic
+            towards_tuple = strategyData.point_in_direction(position, aim, 1.0)
+            towards = np.array(towards_tuple) if towards_tuple is not None else aim # Fallback
+
+            strategyData.my_desired_position = tuple(towards) # move expects tuple
+            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(aim)
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=False)
+
 
 
     def select_skill(self, strategyData):
         drawer = self.world.draw
         MyNum = strategyData.player_unum
-        my_role = strategyData.my_role # Get role defined in Strategy.py
+        my_role = strategyData.my_role # Get role defined in Strategy.py (ensure this is set in Strategy.py)
         active_player = strategyData.active_player_unum
-        position = strategyData.mypos
-        ball_pos = strategyData.ball_2d
-        goal_target = (15.5, 0) # Center of opponent goal
+        position = strategyData.mypos # Current position tuple
+        position_np = np.array(position) # Numpy array version for calculations
+        ball_pos = strategyData.ball_2d # Ball position numpy array
+        goal_target_tuple = (15.5, 0) # Opponent goal center tuple
+        goal_target_np = np.array(goal_target_tuple) # Numpy array version
+        our_goal_center_np = np.array([-15.5, 0])
 
-        # --- Dynamic Formation Selection (from muzzaam/test34) ---
-        formation_positions = []
+        # --- Dynamic Formation Selection ---
+        formation_positions = {} # Dictionary for assignments
         is_defending = False
-        # Use opponent positions only if the list is not empty
-        # Make sure opponent_positions is not None before checking its contents
-        if strategyData.opponent_positions and any(pos is not None for pos in strategyData.opponent_positions):
-            if strategyData.min_opponent_ball_dist + 0.3 < strategyData.min_teammate_ball_dist:
-                formation_positions = GenerateDefense(strategyData.opponent_positions)
-                is_defending = True
-            else:
-                formation_positions = GeneratePlayOn()
-        else: # Default to PlayOn if no opponent data
+        # Check opponent positions safely
+        valid_opponents_exist = strategyData.opponent_positions and any(p is not None for p in strategyData.opponent_positions)
+
+        if valid_opponents_exist and strategyData.min_opponent_ball_dist + 0.3 < strategyData.min_teammate_ball_dist:
+             formation_positions = GenerateDefense(strategyData.opponent_positions)
+             is_defending = True
+        else:
              formation_positions = GeneratePlayOn()
 
+        # Perform role assignment based on the chosen formation
         point_preferences = role_assignment(strategyData.teammate_positions, formation_positions)
-        my_formation_spot = point_preferences.get(MyNum, self.init_pos) # Default to init_pos if assignment fails
+        my_formation_spot = point_preferences.get(MyNum, self.init_pos) # Get assigned spot, fallback to init_pos
+
+
+        # --- Tactical Foul Logic Placeholder ---
+        # Condition: Opponent has ball, is close to our goal, and we are not the closest teammate
+        should_consider_foul = False
+        if valid_opponents_exist and is_defending and MyNum != active_player:
+             # Find closest opponent to our goal
+             min_opp_goal_dist_sq = float('inf')
+             threatening_opp_pos = None
+             for opp_pos in strategyData.opponent_positions:
+                 if opp_pos is not None:
+                     dist_sq = np.sum((np.array(opp_pos) - our_goal_center_np)**2)
+                     if dist_sq < min_opp_goal_dist_sq:
+                         min_opp_goal_dist_sq = dist_sq
+                         threatening_opp_pos = opp_pos
+
+             # If an opponent is very close to goal (e.g., within 5 meters)
+             if threatening_opp_pos is not None and min_opp_goal_dist_sq < 5**2:
+                 # Check if *that* opponent is also the one closest to the ball (likely attacker)
+                 if np.linalg.norm(np.array(threatening_opp_pos) - ball_pos) < strategyData.min_opponent_ball_dist + 0.5:
+                     should_consider_foul = True
+
+
+        if should_consider_foul:
+            # Find an opponent far from the ball and far from our goal to foul
+            best_foul_target = None
+            max_dist_from_ball = 0
+            for opp_pos_orig in strategyData.opponent_positions:
+                 if opp_pos_orig is not None:
+                     opp_pos = np.array(opp_pos_orig)
+                     dist_to_ball = np.linalg.norm(opp_pos - ball_pos)
+                     dist_to_our_goal = np.linalg.norm(opp_pos - our_goal_center_np)
+                     # Target opponent far from ball (>5m) and not too close to our goal (>10m)
+                     if dist_to_ball > 5.0 and dist_to_our_goal > 10.0:
+                         if dist_to_ball > max_dist_from_ball: # Pick the one furthest from ball
+                             max_dist_from_ball = dist_to_ball
+                             best_foul_target = opp_pos
+
+            # If a suitable foul target exists and I am reasonably close to them
+            if best_foul_target is not None and np.linalg.norm(position_np - best_foul_target) < 4.0:
+                 # print(f"Player {MyNum}: Attempting tactical foul on opponent at {best_foul_target}")
+                 # Move aggressively towards the back of the target opponent
+                 # Calculate point slightly behind the target
+                 foul_move_target = strategyData.point_in_direction(best_foul_target, position_np, 0.5) # Aim behind them
+                 if foul_move_target:
+                     return self.move(tuple(foul_move_target), orientation=None, avoid_obstacles=False, is_aggressive=True)
+                 # Else: fallback to normal behavior if calculation fails
 
 
         # --- Role-Based Logic ---
 
         # 1. GOALIE LOGIC (Player 1)
         if my_role == 'GOALIE':
-            goalie_rest_pos = (-14, 0)
-            threat_distance = 7.0 # How close ball must be for goalie to engage
+            goalie_rest_pos = np.array([-14, 0])
+            threat_distance = 7.0
 
-            if active_player == MyNum: # Goalie has the ball
-                 # Pass to the furthest forward teammate who is open
-                 best_pass_target, _ = pass_reciever_selector(MyNum, strategyData.teammate_positions, strategyData.opponent_positions, goal_target)
-                 if best_pass_target is not None:
-                     return self.newKickdef(strategyData, MyNum, position, ball_pos, tuple(best_pass_target))
-                 else: # If no good pass, just clear it towards opponent goal
-                     return self.newKickdef(strategyData, MyNum, position, ball_pos, goal_target)
+            if active_player == MyNum:
+                 # Pass forward using newKickdef
+                 best_pass_target, _ = pass_reciever_selector(MyNum, strategyData.teammate_positions, strategyData.opponent_positions, goal_target_tuple)
+                 pass_aim = np.array(best_pass_target) if best_pass_target is not None else goal_target_np
+                 return self.newKickdef(strategyData, MyNum, position_np, ball_pos, pass_aim)
+            elif np.linalg.norm(ball_pos - our_goal_center_np) < threat_distance:
+                 # Intercept logic (simplified: move between ball and goal center y-clamped)
+                 intercept_y = np.clip(ball_pos[1], -1.5, 1.5) # Clamp Y near goal posts
+                 intercept_pos = (goalie_rest_pos[0], intercept_y)
+                 strategyData.my_desired_position = intercept_pos
+                 strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
+                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=False)
+            else:
+                 # Return to rest pos, face ball
+                 strategyData.my_desired_position = tuple(goalie_rest_pos)
+                 strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
+                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
 
-            elif strategyData.distance(ball_pos, (-15,0)) < threat_distance: # Ball is dangerously close
-                # Move to intercept: Position self between ball and center of goal
-                intercept_pos = strategyData.point_on_line_segment(ball_pos, (-15,0), goalie_rest_pos[0]) # Point on goal line between ball/goal
-                # Adjust Y slightly based on ball Y to cover angle, but clamp near goal posts (-1.5 to 1.5 approx)
-                intercept_y = np.clip(ball_pos[1] * 0.8, -1.5, 1.5)
-
-                # Ensure intercept_pos is not None before accessing index 0
-                final_intercept_pos = (intercept_pos[0], intercept_y) if intercept_pos is not None else (goalie_rest_pos[0], intercept_y)
-
-                strategyData.my_desired_position = final_intercept_pos
-                strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos) # Face the ball
-                return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=False) # Direct move, ignore others near goal
-
-            else: # Ball is far, stay at rest position
-                strategyData.my_desired_position = goalie_rest_pos
-                strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos) # Face the ball
-                return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
-
-        # 2. CHERRY-PICKER LOGIC (Player 11 - Exploiting No Offside)
+        # 2. CHERRY-PICKER LOGIC (Player 11)
         elif my_role == 'CHERRY_PICKER':
-            cherry_pick_spot = (14, 0) # Position right in front of opponent goal
+            # Ensure cherry_pick_spot is a tuple for move command
+            cherry_pick_spot = (14, 0)
 
-            if active_player == MyNum: # Cherry-picker has the ball
-                # Shoot immediately!
-                return self.newKickdef(strategyData, MyNum, position, ball_pos, goal_target)
-            else: # Wait at the spot, facing the ball for a pass
-                strategyData.my_desired_position = cherry_pick_spot
-                strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
-                # Don't worry about formation, just go to the spot
-                return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=True)
+            if active_player == MyNum:
+                 # Shoot using newKickdef
+                 return self.newKickdef(strategyData, MyNum, position_np, ball_pos, goal_target_np)
+            else:
+                 # Go to spot, face ball
+                 strategyData.my_desired_position = cherry_pick_spot
+                 strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
+                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=True)
 
         # 3. DEFENDER LOGIC (Players 2, 3, 4)
         elif my_role == 'DEFENDER':
-            if active_player == MyNum: # Defender has the ball
-                 # Pass to Cherry Picker or another open forward player
-                 # --- SAFETY CHECK ---
-                 cherry_picker_pos = None
-                 if len(strategyData.teammate_positions) > 10 and strategyData.teammate_positions[10] is not None:
-                      cherry_picker_pos = strategyData.teammate_positions[10] # Assuming player 11 is cherry picker
-                 # --- END SAFETY CHECK ---
-
-                 best_pass_target, second_best = pass_reciever_selector(MyNum, strategyData.teammate_positions, strategyData.opponent_positions, goal_target, priority_target=cherry_picker_pos)
-
-                 if best_pass_target is not None:
-                     return self.newKickdef(strategyData, MyNum, position, ball_pos, tuple(best_pass_target))
-                 elif second_best is not None:
-                     return self.newKickdef(strategyData, MyNum, position, ball_pos, tuple(second_best))
-                 else: # Clear towards goal if no pass
-                     return self.newKickdef(strategyData, MyNum, position, ball_pos, goal_target)
-            else: # Defender doesn't have ball - go to formation spot
-                strategyData.my_desired_position = my_formation_spot
-                strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
-                return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
+            if active_player == MyNum:
+                 # Pass forward using newKickdef, prioritizing Cherry Picker
+                 cp_pos = strategyData.teammate_positions[10] if len(strategyData.teammate_positions) > 10 else None
+                 best_pass, second_best = pass_reciever_selector(MyNum, strategyData.teammate_positions, strategyData.opponent_positions, goal_target_tuple, priority_target=cp_pos)
+                 pass_aim = np.array(best_pass) if best_pass is not None else (np.array(second_best) if second_best is not None else goal_target_np)
+                 return self.newKickdef(strategyData, MyNum, position_np, ball_pos, pass_aim)
+            else:
+                 # Go to assigned formation spot
+                 strategyData.my_desired_position = tuple(my_formation_spot)
+                 strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
+                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
 
         # 4. MIDFIELDER LOGIC (Players 5, 6, 7, 8, 9, 10)
         elif my_role == 'MIDFIELDER':
-            if active_player == MyNum: # Midfielder has the ball
-                 # Primary goal: Pass to Cherry Picker. Secondary: Pass to other open forward. Tertiary: Dribble/Shoot.
-                 # --- SAFETY CHECK ---
-                 cherry_picker_pos = None
-                 if len(strategyData.teammate_positions) > 10 and strategyData.teammate_positions[10] is not None:
-                      cherry_picker_pos = strategyData.teammate_positions[10] # Assuming player 11 is cherry picker
-                 # --- END SAFETY CHECK ---
+            if active_player == MyNum:
+                 # Pass to Cherry Picker > Pass Forward > Dribble/Shoot using newKickdef
+                 cp_pos = strategyData.teammate_positions[10] if len(strategyData.teammate_positions) > 10 else None
+                 best_pass, second_best = pass_reciever_selector(MyNum, strategyData.teammate_positions, strategyData.opponent_positions, goal_target_tuple, priority_target=cp_pos)
 
-                 best_pass_target, second_best = pass_reciever_selector(MyNum, strategyData.teammate_positions, strategyData.opponent_positions, goal_target, priority_target=cherry_picker_pos)
-
-                 if best_pass_target is not None:
-                      # Check if best pass is the cherry picker (and cherry_picker_pos is valid)
-                      if cherry_picker_pos is not None and np.array_equal(best_pass_target, cherry_picker_pos):
-                           # Pass directly to cherry picker spot, might lead slightly
-                           pass_target = strategyData.point_in_direction(best_pass_target, goal_target, 0.5)
-                           # Ensure pass_target is not None before converting to tuple
-                           return self.newKickdef(strategyData, MyNum, position, ball_pos, tuple(pass_target)) if pass_target is not None else self.newKickdef(strategyData, MyNum, position, ball_pos, goal_target) # Fallback to shooting
-                      else:
-                           return self.newKickdef(strategyData, MyNum, position, ball_pos, tuple(best_pass_target))
+                 pass_aim = goal_target_np # Default to shooting
+                 if best_pass is not None:
+                     pass_aim = np.array(best_pass)
                  elif second_best is not None:
-                     return self.newKickdef(strategyData, MyNum, position, ball_pos, tuple(second_best))
-                 else: # If no passes, dribble towards goal using fast dribble
-                     return self.newKickdef(strategyData, MyNum, position, ball_pos, goal_target)
+                     pass_aim = np.array(second_best)
 
-            else: # Midfielder doesn't have ball - go to formation spot
-                strategyData.my_desired_position = my_formation_spot
-                strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
-                return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
+                 return self.newKickdef(strategyData, MyNum, position_np, ball_pos, pass_aim)
+            else:
+                 # Go to assigned formation spot
+                 strategyData.my_desired_position = tuple(my_formation_spot)
+                 strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
+                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
 
-        # Fallback (shouldn't happen with defined roles)
+        # Fallback if role is undefined
         else:
-             strategyData.my_desired_position = my_formation_spot
+             # Default to moving to formation spot
+             strategyData.my_desired_position = tuple(my_formation_spot)
              strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(ball_pos)
              return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
 
 
-    # --- Fat proxy methods remain the same ---
-    # ... (keep existing fat_proxy_kick and fat_proxy_move) ...
+    # --- ADDED FAT PROXY METHODS ---
+
     def fat_proxy_kick(self):
-        # ... (keep existing fat_proxy_kick)
         w = self.world
-        r = self.world.robot
+        r = self.world.robot 
         ball_2d = w.ball_abs_pos[:2]
         my_head_pos_2d = r.loc_head_position[:2]
 
         if np.linalg.norm(ball_2d - my_head_pos_2d) < 0.25:
-            self.fat_proxy_cmd += f"(proxy kick 10 {M.normalize_deg( self.kick_direction  - r.imu_torso_orientation ):.2f} 20)"
-            self.fat_proxy_walk = np.zeros(3)
+            # fat proxy kick arguments: power [0,10]; relative horizontal angle [-180,180]; vertical angle [0,70]
+            self.fat_proxy_cmd += f"(proxy kick 10 {M.normalize_deg( self.kick_direction - r.imu_torso_orientation ):.2f} 20)" 
+            self.fat_proxy_walk = np.zeros(3) # reset fat proxy walk
             return True
         else:
-            self.fat_proxy_move(ball_2d-(-0.1,0), None, True)
+            # Fixed syntax: ball_2d - np.array([-0.1, 0]) moves to (ball_x + 0.1, ball_y)
+            self.fat_proxy_move(ball_2d - np.array([-0.1, 0]), None, True) # ignore obstacles
             return False
 
 
     def fat_proxy_move(self, target_2d, orientation, is_orientation_absolute):
-        # ... (keep existing fat_proxy_move)
         r = self.world.robot
+
         target_dist = np.linalg.norm(target_2d - r.loc_head_position[:2])
         target_dir = M.target_rel_angle(r.loc_head_position[:2], r.imu_torso_orientation, target_2d)
 
@@ -361,10 +499,13 @@ class Agent(Base_Agent):
             return
 
         if target_dist < 0.1:
-            if is_orientation_absolute:
+            if orientation is None: # Handle case where orientation is None
+                target_dir = 0
+            elif is_orientation_absolute:
                 orientation = M.normalize_deg( orientation - r.imu_torso_orientation )
-            target_dir = np.clip(orientation, -60, 60)
+                target_dir = np.clip(orientation, -60, 60)
+            else: # Orientation is relative
+                target_dir = np.clip(orientation, -60, 60)
             self.fat_proxy_cmd += (f"(proxy dash {0} {0} {target_dir:.1f})")
         else:
             self.fat_proxy_cmd += (f"(proxy dash {20} {0} {target_dir:.1f})")
-
