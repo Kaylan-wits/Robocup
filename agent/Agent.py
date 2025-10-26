@@ -7,8 +7,9 @@ from strategy.Assignment import role_assignment
 from strategy.Assignment import pass_reciever_selector
 from strategy.Strategy import Strategy 
 
-from formation.Voronoi import GenerateVoronoiPositions
-from formation.Formation import BASE_FORMATION_PLAYON
+from formation.Formation import GeneratePlayOn
+from formation.Formation import GenerateDefense
+
 
 
 class Agent(Base_Agent):
@@ -22,8 +23,6 @@ class Agent(Base_Agent):
         # Args: Server IP, Agent Port, Monitor Port, Uniform No., Robot Type, Team Name, Enable Log, Enable Draw, play mode correction, Wait for Server, Hear Callback
         super().__init__(host, agent_port, monitor_port, unum, robot_type, team_name, enable_log, enable_draw, True, wait_for_server, None)
 
-        # --- ALL 'self' ASSIGNMENTS MUST COME *AFTER* super().__init__() ---
-
         self.enable_draw = enable_draw
         self.state = 0  # 0-Normal, 1-Getting up, 2-Kicking
         self.kick_direction = 0
@@ -32,12 +31,6 @@ class Agent(Base_Agent):
         self.fat_proxy_walk = np.zeros(3) # filtered walk parameters for fat proxy
 
         self.init_pos = ([-14,0],[-9,-5],[-9,0],[-9,5],[-5,-5],[-5,0],[-5,5],[-2,-6],[-2,-2.5],[-2,2.5],[-2,6])[unum-1] # initial formation
-
-        # --- VORONOI CACHING ---
-        self.last_voronoi_calc_time = -1000.0 # Force a calc on the first run
-        self.voronoi_calc_interval = 1    # Recalculate every 0.5 seconds
-        self.cached_voronoi_formation = BASE_FORMATION_PLAYON # Use base as a safe default
-        # --- END CACHING ---
 
 
     def beam(self, avoid_center_circle=False):
@@ -126,6 +119,22 @@ class Agent(Base_Agent):
             return self.behavior.execute("Basic_Kick", self.kick_direction, abort) # Basic_Kick has no kick distance control
         else: # fat proxy behavior
             return self.fat_proxy_kick()
+
+    # --- START OF NEW FUNCTION ---
+    def dribble(self, orientation=None, is_orientation_absolute=True, speed=1, stop=False):
+        '''
+        Dribble with the ball using the RL behavior.
+        This function is a wrapper for the "Dribble" behavior,
+        just like move() wraps "Walk" and kickTarget() wraps "Basic_Kick".
+        '''
+        if self.fat_proxy_cmd is not None:
+            # Fat proxy doesn't have a dedicated dribble, so just move to the ball
+            return self.fat_proxy_kick() 
+
+        # When orientation is None, the Dribble behavior automatically
+        # dribbles towards the opponent's goal.
+        return self.behavior.execute("Dribble", orientation, is_orientation_absolute, speed, stop)
+    # --- END OF NEW FUNCTION ---
             
     # --- START OF MERGED FUNCTION ---
     # This is Amaan's dribble logic, renamed to be clear
@@ -188,12 +197,17 @@ class Agent(Base_Agent):
             self.state = 0 if behavior.execute("Get_Up") else 1
         elif (strategyData.PM_GROUP == self.world.MG_THEIR_KICK):
             self.move(self.init_pos, orientation=strategyData.ball_dir)
+        
+        # --- START OF CHANGE ---
+        # Replaced kickTarget with dribble for set plays
         elif (strategyData.play_mode == self.world.M_OUR_KICKOFF):
             if strategyData.robot_model.unum == 9:
-                self.kickTarget(strategyData,strategyData.mypos,(15,10))
+                self.dribble(orientation=None)
         elif (strategyData.play_mode == self.world.M_OUR_GOAL_KICK):
             if strategyData.robot_model.unum == 1:
-                self.kickTarget(strategyData,strategyData.mypos,(15,0))
+                self.dribble(orientation=None)
+        # --- END OF CHANGE ---
+        
         else:
             if strategyData.play_mode != self.world.M_BEFORE_KICKOFF:
                 self.select_skill(strategyData)
@@ -230,29 +244,23 @@ class Agent(Base_Agent):
 
 
         # Determine formation based on opponent proximity
-        visible_opponents = [pos for pos in strategyData.opponent_positions if pos[0] != -100.0] 
+        visible_opponents = [pos for pos in strategyData.opponent_positions if pos[0] != -100.0] #
 
-        # --- VORONOI CACHING LOGIC ---
-        current_time = self.world.time_local_ms / 1000.0 # Get current time in seconds
-        
-        # Only recalculate if enough time has passed
-        if (current_time - self.last_voronoi_calc_time) > self.voronoi_calc_interval:
-            self.last_voronoi_calc_time = current_time # Update the timer
-            
-            # --- START VORONOI CALCULATION ---
-            if len(visible_opponents) > 0 and strategyData.min_opponent_ball_dist + 1.0 < strategyData.min_teammate_ball_dist:
-                # Opponent is closer to the ball -> DEFEND
-                self.cached_voronoi_formation = GenerateVoronoiPositions(strategyData, is_offensive=False)
-                drawer.annotation((0,10.5), "Mode: DEFENSE (Voronoi)" , drawer.Color.red, "status") 
-            else: 
-                # We are closer to the ball (or no opps visible) -> ATTACK
-                self.cached_voronoi_formation = GenerateVoronoiPositions(strategyData, is_offensive=True)
-                drawer.annotation((0,10.5), "Mode: ATTACK (Voronoi)" , drawer.Color.green, "status")
-            # --- END VORONOI CALCULATION ---
-        
-        # Use the cached formation regardless of whether we recalculated
-        formation_positions = self.cached_voronoi_formation
-        # --- END VORONOI CACHING LOGIC ---
+        if len(visible_opponents) > 0:
+            # --- MODIFICATION: Increased margin from 0.3 to 1.0 ---
+            if strategyData.min_opponent_ball_dist + 1.0 < strategyData.min_teammate_ball_dist:
+                formation_positions = GenerateDefense(visible_opponents) #
+                drawer.annotation((0,10.5), "Mode: DEFENSE" , drawer.Color.red, "status") #
+            # --- ADDED ELSE BLOCK ---
+            else: # Opponent is not significantly closer, stay in attack
+                # Pass ball's X coordinate to the dynamic formation generator
+                formation_positions = GeneratePlayOn(strategyData.ball_2d[0]) #
+                drawer.annotation((0,10.5), "Mode: ATTACK / PLAY ON" , drawer.Color.green, "status") #
+        # --- ADDED OUTER ELSE BLOCK ---
+        else: # No opponents visible, default to attack
+            formation_positions = GeneratePlayOn(strategyData.ball_2d[0]) #
+            drawer.annotation((0,10.5), "Mode: ATTACK / PLAY ON" , drawer.Color.green, "status") #
+
 
 
         # Pad teammate positions if needed
@@ -294,41 +302,28 @@ class Agent(Base_Agent):
 
         drawer.line(strategyData.mypos, strategyData.my_desired_position, 2,drawer.Color.blue,"target line")
 
+        # --- START OF CHANGE ---
+        # Removed all pass/kick logic.
+        # If not in formation, active player dribbles, others move.
         if not strategyData.IsFormationReady(point_preferences):   
-            target,second_target = pass_reciever_selector(strategyData.player_unum, strategyData.teammate_positions,strategyData.opponent_positions,(15,0))
             if strategyData.active_player_unum == strategyData.robot_model.unum:  # I am the active player
-                if (target is not None):
-                    drawer.line(strategyData.mypos, target, 2,drawer.Color.red,"pass line")
-                    return self.kickTarget(strategyData,strategyData.mypos,target)
-                elif(second_target is not None):
-                    return self.kickTarget(strategyData,strategyData.mypos,second_target)
-                else:
-                    # --- MODIFICATION ---
-                    # Calling the dribble function instead of kickTarget
-                    return self.dribbleToTarget(strategyData, strategyData.player_unum, strategyData.mypos, strategyData.ball_2d, (15,0.5))
-                    # --- END MODIFICATION ---
+                # Always dribble to the goal
+                return self.dribble(orientation=None)
             else:
+                # Follow formation
                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
         
         #------------------------------------------------------
         #Pass Selector
         if strategyData.active_player_unum == strategyData.robot_model.unum: # I am the active player 
-            drawer.annotation((0,10.5), "Pass Selector Phase" , drawer.Color.yellow, "status")
+            drawer.annotation((0,10.5), "Dribbling to Goal" , drawer.Color.green, "status") # Changed status
         else:
             drawer.clear_player()
 
+        # If in formation, active player dribbles, others move.
         if strategyData.active_player_unum == strategyData.robot_model.unum: # I am the active player 
-            target,second_target = pass_reciever_selector(strategyData.player_unum, strategyData.teammate_positions,strategyData.opponent_positions,(15,0))
-            if (target is not None):
-                drawer.line(strategyData.mypos, target, 2,drawer.Color.red,"pass line")
-                return self.kickTarget(strategyData,strategyData.mypos,target)
-            elif(second_target is not None):
-                return self.kickTarget(strategyData,strategyData.mypos,second_target)
-            else:
-                # --- MODIFICATION ---
-                # Calling the dribble function instead of kickTarget
-                return self.dribbleToTarget(strategyData, strategyData.player_unum, strategyData.mypos, strategyData.ball_2d, (15,0.5))
-                # --- END MODIFICATION ---
+            # Always dribble to the goal
+            return self.dribble(orientation=None)
         else:
             # Check if self.player_unum is in point_preferences before accessing
             if strategyData.player_unum in point_preferences:
@@ -336,6 +331,7 @@ class Agent(Base_Agent):
             else:
                 strategyData.my_desired_position = self.init_pos
             return self.move(strategyData.my_desired_position, orientation=strategyData.ball_dir)
+        # --- END OF CHANGE ---
 
     #--------------------------------------- Fat proxy auxiliary methods
 
