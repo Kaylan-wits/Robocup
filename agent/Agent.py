@@ -7,9 +7,8 @@ from strategy.Assignment import role_assignment
 from strategy.Assignment import pass_reciever_selector
 from strategy.Strategy import Strategy 
 
-from formation.Formation import GeneratePlayOn
-from formation.Formation import GenerateDefense
-
+from formation.Voronoi import GenerateVoronoiPositions
+from formation.Formation import BASE_FORMATION_PLAYON
 
 
 class Agent(Base_Agent):
@@ -23,6 +22,8 @@ class Agent(Base_Agent):
         # Args: Server IP, Agent Port, Monitor Port, Uniform No., Robot Type, Team Name, Enable Log, Enable Draw, play mode correction, Wait for Server, Hear Callback
         super().__init__(host, agent_port, monitor_port, unum, robot_type, team_name, enable_log, enable_draw, True, wait_for_server, None)
 
+        # --- ALL 'self' ASSIGNMENTS MUST COME *AFTER* super().__init__() ---
+
         self.enable_draw = enable_draw
         self.state = 0  # 0-Normal, 1-Getting up, 2-Kicking
         self.kick_direction = 0
@@ -31,6 +32,12 @@ class Agent(Base_Agent):
         self.fat_proxy_walk = np.zeros(3) # filtered walk parameters for fat proxy
 
         self.init_pos = ([-14,0],[-9,-5],[-9,0],[-9,5],[-5,-5],[-5,0],[-5,5],[-2,-6],[-2,-2.5],[-2,2.5],[-2,6])[unum-1] # initial formation
+
+        # --- VORONOI CACHING ---
+        self.last_voronoi_calc_time = -1000.0 # Force a calc on the first run
+        self.voronoi_calc_interval = 1    # Recalculate every 0.5 seconds
+        self.cached_voronoi_formation = BASE_FORMATION_PLAYON # Use base as a safe default
+        # --- END CACHING ---
 
 
     def beam(self, avoid_center_circle=False):
@@ -223,23 +230,29 @@ class Agent(Base_Agent):
 
 
         # Determine formation based on opponent proximity
-        visible_opponents = [pos for pos in strategyData.opponent_positions if pos[0] != -100.0] #
+        visible_opponents = [pos for pos in strategyData.opponent_positions if pos[0] != -100.0] 
 
-        if len(visible_opponents) > 0:
-            # --- MODIFICATION: Increased margin from 0.3 to 1.0 ---
-            if strategyData.min_opponent_ball_dist + 1.0 < strategyData.min_teammate_ball_dist:
-                formation_positions = GenerateDefense(visible_opponents) #
-                drawer.annotation((0,10.5), "Mode: DEFENSE" , drawer.Color.red, "status") #
-            # --- ADDED ELSE BLOCK ---
-            else: # Opponent is not significantly closer, stay in attack
-                # Pass ball's X coordinate to the dynamic formation generator
-                formation_positions = GeneratePlayOn(strategyData.ball_2d[0]) #
-                drawer.annotation((0,10.5), "Mode: ATTACK / PLAY ON" , drawer.Color.green, "status") #
-        # --- ADDED OUTER ELSE BLOCK ---
-        else: # No opponents visible, default to attack
-            formation_positions = GeneratePlayOn(strategyData.ball_2d[0]) #
-            drawer.annotation((0,10.5), "Mode: ATTACK / PLAY ON" , drawer.Color.green, "status") #
-
+        # --- VORONOI CACHING LOGIC ---
+        current_time = self.world.time_local_ms / 1000.0 # Get current time in seconds
+        
+        # Only recalculate if enough time has passed
+        if (current_time - self.last_voronoi_calc_time) > self.voronoi_calc_interval:
+            self.last_voronoi_calc_time = current_time # Update the timer
+            
+            # --- START VORONOI CALCULATION ---
+            if len(visible_opponents) > 0 and strategyData.min_opponent_ball_dist + 1.0 < strategyData.min_teammate_ball_dist:
+                # Opponent is closer to the ball -> DEFEND
+                self.cached_voronoi_formation = GenerateVoronoiPositions(strategyData, is_offensive=False)
+                drawer.annotation((0,10.5), "Mode: DEFENSE (Voronoi)" , drawer.Color.red, "status") 
+            else: 
+                # We are closer to the ball (or no opps visible) -> ATTACK
+                self.cached_voronoi_formation = GenerateVoronoiPositions(strategyData, is_offensive=True)
+                drawer.annotation((0,10.5), "Mode: ATTACK (Voronoi)" , drawer.Color.green, "status")
+            # --- END VORONOI CALCULATION ---
+        
+        # Use the cached formation regardless of whether we recalculated
+        formation_positions = self.cached_voronoi_formation
+        # --- END VORONOI CACHING LOGIC ---
 
 
         # Pad teammate positions if needed
@@ -326,4 +339,36 @@ class Agent(Base_Agent):
 
     #--------------------------------------- Fat proxy auxiliary methods
 
- 
+    def fat_proxy_kick(self):
+        w = self.world
+        r = self.world.robot 
+        ball_2d = w.ball_abs_pos[:2]
+        my_head_pos_2d = r.loc_head_position[:2]
+
+        if np.linalg.norm(ball_2d - my_head_pos_2d) < 0.25:
+            # fat proxy kick arguments: power [0,10]; relative horizontal angle [-180,180]; vertical angle [0,70]
+            self.fat_proxy_cmd += f"(proxy kick 10 {M.normalize_deg( self.kick_direction  - r.imu_torso_orientation ):.2f} 20)" 
+            self.fat_proxy_walk = np.zeros(3) # reset fat proxy walk
+            return True
+        else:
+            self.fat_proxy_move(ball_2d-(-0.1,0), None, True) # ignore obstacles
+            return False
+
+
+    def fat_proxy_move(self, target_2d, orientation, is_orientation_absolute):
+        r = self.world.robot
+
+        target_dist = np.linalg.norm(np.array(target_2d) - r.loc_head_position[:2])
+        target_dir = M.target_rel_angle(r.loc_head_position[:2], r.imu_torso_orientation, target_2d)
+
+        if target_dist > 0.1 and abs(target_dir) < 8:
+            self.fat_proxy_cmd += (f"(proxy dash {100} {0} {0})")
+            return
+
+        if target_dist < 0.1:
+            if is_orientation_absolute:
+                orientation = M.normalize_deg( orientation - r.imu_torso_orientation )
+            target_dir = np.clip(orientation, -60, 60)
+            self.fat_proxy_cmd += (f"(proxy dash {0} {0} {target_dir:.1f})")
+        else:
+            self.fat_proxy_cmd += (f"(proxy dash {20} {0} {target_dir:.1f})")
