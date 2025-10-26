@@ -15,11 +15,16 @@ def calculateEuclideanDistance(initialPos, formationPos):
 
 def findMinZeroRow(zeroMatrix, markedPositions):
     minRowInfo = [float('inf'), -1]
+    num_rows = zeroMatrix.shape[0] # <-- MODIFIED: Make dynamic
 
-    for rowIndex in range(11): 
+    for rowIndex in range(num_rows): # <-- MODIFIED: Was 11
         zeroCount = np.sum(zeroMatrix[rowIndex])
         if zeroCount > 0 and zeroCount < minRowInfo[0]:
             minRowInfo = [zeroCount, rowIndex]
+
+    # Handle cases where no valid row is found
+    if minRowInfo[1] == -1:
+        return
 
     zeroColIndex = np.where(zeroMatrix[minRowInfo[1]])[0][0]
     markedPositions.append((minRowInfo[1], zeroColIndex))
@@ -64,6 +69,11 @@ def modifyMatrix(matrix, coveredRows, coveredCols):
             for c in range(len(modifiedMatrix[r])):
                 if c not in coveredCols:
                     nonZeroElements.append(modifiedMatrix[r, c])
+    
+    # Avoid error if nonZeroElements is empty
+    if not nonZeroElements:
+        return modifiedMatrix
+        
     smallestValue = min(nonZeroElements)
     for r in range(len(modifiedMatrix)):
         if r not in coveredRows:
@@ -79,29 +89,62 @@ def hungarianMethod(matrix):
     adjustedMatrix = adjustedMatrix - rowMin[:, np.newaxis]
     colMin=np.min(adjustedMatrix, axis=0)
     adjustedMatrix= adjustedMatrix-colMin
-        
+    
+    num_roles = matrix.shape[0] # <-- MODIFIED: Make dynamic
     totalZeros = 0
-    while totalZeros < 11:
+    while totalZeros < num_roles: # <-- MODIFIED: Was 11
         positions, markedRows, markedCols = identifyMarkedPositions(adjustedMatrix)
         totalZeros = len(markedRows) + len(markedCols)
 
-        if totalZeros < 11:
+        if totalZeros < num_roles: # <-- MODIFIED: Was 11
             adjustedMatrix = modifyMatrix(adjustedMatrix, markedRows, markedCols)
 
     return positions
 
 def role_assignment(initialPos, formation):
-    cost_matrix = np.zeros((11, 11))
     
-    for r in range(11):
-        for c in range(11):
-            cost_matrix[r][c] = calculateEuclideanDistance(initialPos[r], formation[c])
-    cost_copy = cost_matrix.copy()
-    positions = hungarianMethod(cost_copy)
+    # --- ENTIRE FUNCTION MODIFIED TO LOCK GOALKEEPER ---
+    
     point_preferences = {}
+    
+    # 1. Manually assign Goalkeeper (Player 1) to Goalkeeper Role (formation[0])
+    # We assume initialPos[0] is player 1's position
+    # The key in point_preferences is unum (1-based)
+    point_preferences[1] = formation[0] 
+
+    # 2. Create 10x10 cost matrix for the remaining 10 field players
+    cost_matrix_10x10 = np.zeros((10, 10))
+    
+    # Get positions for players 2-11 (indices 1-10)
+    field_player_initialPos = initialPos[1:] 
+    # Get formation spots for roles 1-10 (indices 1-10)
+    field_player_formation = formation[1:] 
+
+    for r in range(10):
+        for c in range(10):
+            # r=0 is player 2 (index 1), c=0 is formation role 1 (index 1)
+            cost_matrix_10x10[r][c] = calculateEuclideanDistance(field_player_initialPos[r], field_player_formation[c])
+    
+    # 3. Solve the 10x10 assignment problem
+    cost_copy = cost_matrix_10x10.copy()
+    # Call our now-dynamic hungarianMethod
+    positions = hungarianMethod(cost_copy) 
+    
+    # 4. Populate point_preferences for field players
     for i, (row, col) in enumerate(positions):
-        point_preferences[row + 1] = formation[col]
+        # 'row' from hungarian is 0-9 (representing players 2-11)
+        # 'col' from hungarian is 0-9 (representing roles 1-10)
+        
+        # Map the row index (0-9) back to the player unum (2-11)
+        player_unum = row + 2 
+        
+        # Map the col index (0-9) back to the correct formation position
+        formation_pos = field_player_formation[col]
+        
+        point_preferences[player_unum] = formation_pos
+            
     return point_preferences
+    # --- END OF MODIFIED LOGIC ---
 
 
 def pass_reciever_selector(player_unum, teammate_positions,opponent_positions,final_target):
