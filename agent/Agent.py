@@ -228,9 +228,9 @@ class Agent(Base_Agent):
             RECEIVER_UNUM = 5
             
             # The KICK'S target (in opponent's half)
-            KICK_TARGET_POS = (1.0, -0.5)
+            KICK_TARGET_POS = (-0, -0.5)
             # The RECEIVER'S legal starting spot (in our half)
-            RECEIVER_START_POS = (-0.5, -1) 
+            RECEIVER_START_POS = (-1, -3) 
             
             if strategyData.robot_model.unum == KICKER_UNUM:
                 # Move to ball and kick it to the forward target

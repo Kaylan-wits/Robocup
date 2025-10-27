@@ -110,27 +110,27 @@ BASE_DEFENSE_5 = [
 BASE_MIDFIELD_5 = [
     np.array([-14, 0]),   # 1. Goalkeeper
     np.array([-8, 0]),    # 2. "Quarterback" Defender
-    np.array([0, -4]),    # 3. Left Midfielder
-    np.array([0, 4]),     # 4. Right Midfielder
-    np.array([6, 0])      # 5. Attacking Midfielder
+    np.array([-1, -4]),    # 3. Left Midfielder
+    np.array([-1, 4]),     # 4. Right Midfielder
+    np.array([2, 0])      # 5. Attacking Midfielder
 ]
 
 # 1-1-1-2 Attack Formation (When ball is in their third, x > 7)
 BASE_ATTACK_5 = [
     np.array([-14, 0]),   # 1. Goalkeeper
-    np.array([-6, 0]),    # 2. Defender
-    np.array([2, 0]),     # 3. Midfielder
-    np.array([9, -3]),    # 4. Left Striker
-    np.array([9, 3])      # 5. Right Striker
+    np.array([-9, 1]),    # 2. Defender
+    np.array([-2, -1]),     # 3. Midfielder
+    np.array([11, -2]),    # 4. Left Striker
+    np.array([11, 2])      # 5. Right Striker
 ]
 
 def GenerateFormation_5(ball_x=0.0):
     """
     Selects the best 5-player formation based on the ball's X-position.
     """
-    if ball_x < -7.0: # Ball is deep in our half
+    if ball_x < -4.0: # Ball is deep in our half
         return BASE_DEFENSE_5
-    elif ball_x < 7.0: # Ball is in the midfield
+    elif ball_x < 2.0: # Ball is in the midfield
         return BASE_MIDFIELD_5
     else: # Ball is deep in their half
         return BASE_ATTACK_5
