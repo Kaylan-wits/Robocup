@@ -9,6 +9,7 @@ from strategy.Strategy import Strategy
 
 from formation.Formation import GeneratePlayOn
 from formation.Formation import GenerateDefense
+from formation.Formation import GenerateFormation_5 # <--- ADD THIS LINE
 
 
 
@@ -30,7 +31,17 @@ class Agent(Base_Agent):
         self.fat_proxy_cmd = "" if is_fat_proxy else None
         self.fat_proxy_walk = np.zeros(3) # filtered walk parameters for fat proxy
 
-        self.init_pos = ([-14,0],[-9,-5],[-9,0],[-9,5],[-5,-5],[-5,0],[-5,5],[-2,-6],[-2,-2.5],[-2,2.5],[-2,6])[unum-1] # initial formation
+        # 5-Player initial positions (based on user image)
+        # NEW 5-Player initial positions (Strikers 3 & 5 are ready)
+        init_positions_5 = [
+            [-14, 0],   # 1: Goalie
+            [-9, -3],   # 2: Left Defender
+            [-2.5, 1],  # 3: STRIKER 1 (Kicker) - Legal spot
+            [-9, 3],    # 4: Right Defender
+            [-2.5, -1]  # 5: STRIKER 2 (Receiver/Charger) - Legal spot
+        ]
+        self.init_pos = init_positions_5[unum-1] # initial formation
+        
 
 
     def beam(self, avoid_center_circle=False):
@@ -202,7 +213,7 @@ class Agent(Base_Agent):
             
             if strategyData.robot_model.unum == CHARGER_UNUM:
                 # Move to the edge of the center circle
-                self.move(target_2d=(-2.5, -0.5), orientation=strategyData.ball_dir)
+                self.move(target_2d=(-2.5, 0), orientation=strategyData.ball_dir)
             else:
                 # All other players hold their initial position
                 self.move(self.init_pos, orientation=strategyData.ball_dir)
@@ -276,48 +287,36 @@ class Agent(Base_Agent):
             drawer.clear("status")    
 
 
-        # Determine formation based on opponent proximity
-        visible_opponents = [pos for pos in strategyData.opponent_positions if pos[0] != -100.0] #
+        # --- NEW 5-PLAYER FORMATION LOGIC ---
+        
+        # 1. Select the best 5-player formation based on the ball's X position
+        formation_positions = GenerateFormation_5(strategyData.ball_2d[0])
 
-        if len(visible_opponents) > 0:
-            # --- MODIFICATION: Increased margin from 0.3 to 1.0 ---
-            if strategyData.min_opponent_ball_dist + 1.0 < strategyData.min_teammate_ball_dist:
-                formation_positions = GenerateDefense(visible_opponents) #
-                drawer.annotation((0,10.5), "Mode: DEFENSE" , drawer.Color.red, "status") #
-            # --- ADDED ELSE BLOCK ---
-            else: # Opponent is not significantly closer, stay in attack
-                # Pass ball's X coordinate to the dynamic formation generator
-                formation_positions = GeneratePlayOn(strategyData.ball_2d[0]) #
-                drawer.annotation((0,10.5), "Mode: ATTACK / PLAY ON" , drawer.Color.green, "status") #
-        # --- ADDED OUTER ELSE BLOCK ---
-        else: # No opponents visible, default to attack
-            formation_positions = GeneratePlayOn(strategyData.ball_2d[0]) #
-            drawer.annotation((0,10.5), "Mode: ATTACK / PLAY ON" , drawer.Color.green, "status") #
-
-
-
-        # Pad teammate positions if needed
+        # 2. Get the list of our 5 teammates
         current_teammates = strategyData.teammate_positions
-        # Filter out any None or dummy values before padding
+        
+        # Filter out any None or dummy values
         valid_teammates = [pos for pos in current_teammates if pos is not None and not np.array_equal(pos, np.array([-100.0, -100.0]))]
-        num_teammates = len(valid_teammates)
-        dummy_pos = np.array([-100.0, -100.0])
-        if num_teammates < 11:
-            padded_teammates = valid_teammates + [dummy_pos] * (11 - num_teammates)
+        
+        # 3. Handle if we don't see all 5 teammates (e.g., use dummy positions for unseen players)
+        num_teammates_seen = len(valid_teammates)
+        if num_teammates_seen < 5:
+            # Note: This simple padding might not be ideal, but it matches the old logic.
+            # It's better to use last-known positions if possible.
+            dummy_pos = np.array([-100.0, -100.0]) 
+            padded_teammates = valid_teammates + [dummy_pos] * (5 - num_teammates_seen)
         else:
-            padded_teammates = valid_teammates[:11] # Take first 11 valid
+            padded_teammates = valid_teammates[:5] # Use the first 5 seen
 
-        # Pad formation positions if needed (double check, Formation.py should handle this)
-        current_formation = formation_positions
-        num_formation = len(current_formation)
-        if num_formation < 11:
-            padded_formation = current_formation + [dummy_pos] * (11 - num_formation)
-        else:
-            padded_formation = current_formation[:11]
+        # 4. Call the 5-player role_assignment
+        # Ensure our formation list also has 5 positions
+        padded_formation = formation_positions[:5] 
+        if len(padded_formation) < 5:
+             dummy_pos = np.array([-100.0, -100.0])
+             padded_formation = padded_formation + [dummy_pos] * (5 - len(padded_formation))
 
-        # Now call role_assignment with guaranteed 11-element lists
         point_preferences = role_assignment(padded_teammates, padded_formation)
-        # --- END PADDING FIX ---
+        # --- END NEW 5-PLAYER LOGIC ---
         
         if strategyData.active_player_unum == strategyData.robot_model.unum:  # I am the active player
             if strategyData.min_teammate_ball_dist < strategyData.min_opponent_ball_dist:

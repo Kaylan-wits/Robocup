@@ -1,18 +1,20 @@
 import numpy as np
 
-# Define the BASE attacking formation (positions relative to a neutral state)
+# --- 11 PLAYER FORMATIONS (Originals) ---
+# We leave these here in case they are needed elsewhere
+
 BASE_FORMATION_PLAYON = [
-    np.array([-14, 0]),    # Goalkeeper (Stays back)
-    np.array([-7, -4]),   # Left Defender
-    np.array([-7, 4]),    # Right Defender
-    np.array([-2, 0]),    # Center Defender / Mid
-    np.array([3, -5]),    # Left Midfielder
-    np.array([3, 5]),     # Right Midfielder
-    np.array([6, 0]),     # Center Attacking Mid
-    np.array([9, -3]),    # Left Forward
-    np.array([9, 3]),     # Right Forward
-    np.array([12, -1]),   # Striker Left
-    np.array([12, 1])     # Striker Right
+    np.array([-14, 0]),     # Goalkeeper (Stays back)
+    np.array([-7, -4]),    # Left Defender
+    np.array([-7, 4]),     # Right Defender
+    np.array([-2, 0]),     # Center Defender / Mid
+    np.array([3, -5]),     # Left Midfielder
+    np.array([3, 5]),      # Right Midfielder
+    np.array([6, 0]),      # Center Attacking Mid
+    np.array([9, -3]),     # Left Forward
+    np.array([9, 3]),      # Right Forward
+    np.array([12, -1]),    # Striker Left
+    np.array([12, 1])      # Striker Right
 ]
 
 def GeneratePlayOn(ball_x=0.0): # Takes ball's X-coordinate as input
@@ -33,14 +35,14 @@ def GeneratePlayOn(ball_x=0.0): # Takes ball's X-coordinate as input
     for i, base_pos in enumerate(BASE_FORMATION_PLAYON):
         # Goalkeeper (index 0) doesn't shift much
         if i == 0:
-             shift = norm_ball_x * 1.0 # GK moves up slightly
+            shift = norm_ball_x * 1.0 # GK moves up slightly
         # Defenders (indices 1, 2, 3) shift less
         elif base_pos[0] < -1:
-             # Increased defender shift from 0.6 to 0.8
-             shift = norm_ball_x * (max_forward_shift * 0.8)
+            # Increased defender shift from 0.6 to 0.8
+            shift = norm_ball_x * (max_forward_shift * 0.8)
         # Midfielders/Attackers shift more
         else:
-             shift = norm_ball_x * max_forward_shift
+            shift = norm_ball_x * max_forward_shift
 
         # Calculate new position, ensuring players don't go too far past goal lines
         new_x = np.clip(base_pos[0] + shift, -14.5, 14.5)
@@ -91,3 +93,44 @@ def GenerateDefense(opponents):
             formation.extend([dummy_pos] * num_players_to_add)
 
     return formation[:11]
+
+
+# --- 5 PLAYER FORMATIONS ---
+
+# 1-3-1 Defensive Formation (When ball is in our third, x < -7)
+BASE_DEFENSE_5 = [
+    np.array([-14, 0]),   # 1. Goalkeeper
+    np.array([-10, -5]),  # 2. Left Defender
+    np.array([-10, 0]),   # 3. Center Defender
+    np.array([-10, 5]),   # 4. Right Defender
+    np.array([-5, 0])     # 5. Holding Midfielder
+]
+
+# 1-1-2-1 Midfield Formation (When ball is in middle third, -7 < x < 7)
+BASE_MIDFIELD_5 = [
+    np.array([-14, 0]),   # 1. Goalkeeper
+    np.array([-8, 0]),    # 2. "Quarterback" Defender
+    np.array([0, -4]),    # 3. Left Midfielder
+    np.array([0, 4]),     # 4. Right Midfielder
+    np.array([6, 0])      # 5. Attacking Midfielder
+]
+
+# 1-1-1-2 Attack Formation (When ball is in their third, x > 7)
+BASE_ATTACK_5 = [
+    np.array([-14, 0]),   # 1. Goalkeeper
+    np.array([-6, 0]),    # 2. Defender
+    np.array([2, 0]),     # 3. Midfielder
+    np.array([9, -3]),    # 4. Left Striker
+    np.array([9, 3])      # 5. Right Striker
+]
+
+def GenerateFormation_5(ball_x=0.0):
+    """
+    Selects the best 5-player formation based on the ball's X-position.
+    """
+    if ball_x < -7.0: # Ball is deep in our half
+        return BASE_DEFENSE_5
+    elif ball_x < 7.0: # Ball is in the midfield
+        return BASE_MIDFIELD_5
+    else: # Ball is deep in their half
+        return BASE_ATTACK_5
