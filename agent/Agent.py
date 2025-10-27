@@ -195,21 +195,56 @@ class Agent(Base_Agent):
             self.beam(True) # avoid center circle
         elif self.state == 1 or (behavior.is_ready("Get_Up") and self.fat_proxy_cmd is None):
             self.state = 0 if behavior.execute("Get_Up") else 1
+
         elif (strategyData.PM_GROUP == self.world.MG_THEIR_KICK):
-            self.move(self.init_pos, orientation=strategyData.ball_dir)
+            # USE ATTACKER (PLAYER 5) TO CHARGE
+            CHARGER_UNUM = 5 
+            
+            if strategyData.robot_model.unum == CHARGER_UNUM:
+                # Move to the edge of the center circle
+                self.move(target_2d=(-2.5, -0.5), orientation=strategyData.ball_dir)
+            else:
+                # All other players hold their initial position
+                self.move(self.init_pos, orientation=strategyData.ball_dir)
+
+
         # --- START OF CHANGE ---
         # Replaced kickTarget with dribble for set plays
         elif (strategyData.play_mode == self.world.M_OUR_KICKOFF):
-            if strategyData.robot_model.unum == 9:
-                self.dribble(orientation=None)
+            # NEW AGGRESSIVE PLAN: Player 3 kicks the ball forward, and Player 5
+            # runs onto it from a legal starting position.
+            KICKER_UNUM = 3
+            RECEIVER_UNUM = 5
+            
+            # The KICK'S target (in opponent's half)
+            KICK_TARGET_POS = (1.0, -0.5)
+            # The RECEIVER'S legal starting spot (in our half)
+            RECEIVER_START_POS = (-0.5, -1) 
+            
+            if strategyData.robot_model.unum == KICKER_UNUM:
+                # Move to ball and kick it to the forward target
+                self.kickTarget(strategyData, strategyData.mypos, KICK_TARGET_POS)
+                
+            elif strategyData.robot_model.unum == RECEIVER_UNUM:
+                # Move to the legal "ready" spot and face the ball
+                self.move(target_2d=RECEIVER_START_POS, orientation=strategyData.ball_dir)
+                
+            else:
+                # All other players (1, 2, 4) hold their initial position
+                self.move(self.init_pos, orientation=strategyData.ball_dir)
+
+
         elif (strategyData.play_mode == self.world.M_OUR_GOAL_KICK):
             if strategyData.robot_model.unum == 1:
                 self.dribble(orientation=None)
         # --- END OF CHANGE ---
         else:
-            if strategyData.play_mode != self.world.M_BEFORE_KICKOFF:
+            # This is the FIX: Only call select_skill() if the game is in PlayOn
+            if strategyData.play_mode == self.world.M_PLAY_ON:
                 self.select_skill(strategyData)
             else:
+                # This will now correctly do nothing during M_BEFORE_KICKOFF
+                # and all other unhandled modes, letting our kickoff logic work.
                 pass
 
 
