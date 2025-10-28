@@ -413,3 +413,103 @@ class Strategy():
                   if min_total_dist < current_distance < max_total_dist and current_distance < min_distance:
                        min_distance = current_distance; closest_ahead_pos = teammate_pos
         return tuple(closest_ahead_pos) if closest_ahead_pos is not None else tuple(position)
+
+    # --- START OF NEW METHODS ---
+
+    def is_path_blocked(self, start_point, end_point, check_opponents=True, buffer=0.5):
+        """
+        Checks if a line segment between two points is blocked by a player.
+        'buffer' is the radius around an opponent to consider as "blocked".
+        """
+        p1 = np.array(start_point)
+        p2 = np.array(end_point)
+        path_vec = p2 - p1
+        path_len_sq = np.dot(path_vec, path_vec)
+
+        if path_len_sq < 1e-9: # Use a small epsilon for robustness
+            return False # Start and end are basically the same
+
+        players_to_check = self.opponent_positions if check_opponents else self.teammate_positions
+
+        for player_pos in players_to_check:
+            # Ignore unseen players
+            if np.array_equal(player_pos, np.array([-100.0, -100.0])):
+                continue
+            
+            p3 = np.array(player_pos)
+            
+            # Vector from start point to player
+            to_player_vec = p3 - p1
+            
+            # Calculate projection 't' as a ratio of the path vector
+            # t = (p3 - p1) . (p2 - p1) / |p2 - p1|^2
+            t = np.dot(to_player_vec, path_vec) / path_len_sq
+            
+            # Check if projection is on the line segment (0 < t < 1)
+            if 0.0 < t < 1.0:
+                # Find the closest point on the *infinite* line to the player
+                closest_point_on_line = p1 + t * path_vec
+                
+                # Calculate distance from player to the line
+                dist_sq = np.sum((p3 - closest_point_on_line)**2)
+                
+                if dist_sq < buffer**2:
+                    return True # Path is blocked
+        
+        return False # No blocks found
+
+    def find_best_kick_target(self):
+        """
+        Decides the best target for a kick using only kickTarget.
+        Returns: A tuple (target_pos, kick_type) or (None, None) if no reasonable action found.
+        """
+        my_pos = self.mypos
+        goal_pos = (15.0, 0.0) # Opponent goal
+
+        # 1. Check for a direct shot
+        # Use a larger buffer for shooting to be safer
+        if not self.is_path_blocked(my_pos, goal_pos, check_opponents=True, buffer=0.8):
+            # Check if we are reasonably close enough to shoot
+            if self.distance(my_pos, goal_pos) < 10.0:
+                return goal_pos, "Shot"
+
+        # 2. Find an open teammate
+        best_pass_target = None
+        min_dist_to_goal = float('inf')
+
+        for i, tm_pos_np in enumerate(self.teammate_positions): # Use tm_pos_np to indicate numpy array
+            tm_pos = tuple(tm_pos_np) # Convert to tuple for consistency if needed later
+            if i + 1 == self.player_unum: # Skip self
+                continue
+            if np.array_equal(tm_pos_np, np.array([-100.0, -100.0])): # Skip unseen
+                continue
+
+            # Only pass to teammates who are in a good position (e.g., ahead or level)
+            if tm_pos[0] > my_pos[0] - 2.0:
+                if not self.is_path_blocked(my_pos, tm_pos, check_opponents=True, buffer=0.5):
+                    # This is a valid, unblocked pass
+                    # Pick the teammate closest to the opponent's goal
+                    dist_to_goal = self.distance(tm_pos, goal_pos)
+                    if dist_to_goal < min_dist_to_goal:
+                        min_dist_to_goal = dist_to_goal
+                        best_pass_target = tm_pos # Store as tuple
+
+        if best_pass_target is not None:
+            return best_pass_target, "Pass" # Return tuple
+
+        # 3. No shot, no pass. Default to a "self-pass" (kick-and-chase)
+        # Kick 2-3 meters forward into open space, aiming towards goal
+        self_pass_target_np = self.point_in_direction(my_pos, goal_pos, distance=3.0)
+        self_pass_target = tuple(self_pass_target_np) # Convert to tuple
+
+        # Check if the "self-pass" landing zone is clear
+        if not self.is_path_blocked(my_pos, self_pass_target, check_opponents=True, buffer=1.0):
+             return self_pass_target, "Self-Pass" # Return tuple
+
+        # 4. If even that is blocked, just kick towards the goal side as a clear
+        # Check if clearing towards goal is blocked
+        if not self.is_path_blocked(my_pos, goal_pos, check_opponents=True, buffer=0.5):
+            return goal_pos, "Clear" # Return tuple
+
+        # 5. Absolute fallback: If everything else fails, return None
+        return None, None # Indicate no suitable kick target found
