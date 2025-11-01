@@ -49,7 +49,7 @@ class Agent(Base_Agent):
         pos = self.init_pos[:] # copy position list 
         self.state = 0
         
-
+ 
         # Avoid center circle by moving the player back 
         if avoid_center_circle and np.linalg.norm(self.init_pos) < 2.5:
             pos[0] = -2.3 
@@ -149,7 +149,7 @@ class Agent(Base_Agent):
             
     # --- START OF MERGED FUNCTION ---
     # This is Amaan's dribble logic, renamed to be clear
-    def dribbleToTarget(self, strategyData, MyNum=0, position=(0,0), ball_pos=(0.0), aim=(15.5,0)):
+    def dribbleToTarget(self, strategyData, MyNum=0, position=(0,0), ball_pos=(0.0, 0.0), aim=(15.5,0)):
         goal = aim
         # if strategyData.min_opponent_ball_dist > 1:
             # NOTE: potential_fields_pathfinding is very complex. Let's not use it for now
@@ -170,19 +170,22 @@ class Agent(Base_Agent):
         elif not(strategyData.are_points_collinear(position, ball_pos, aim)):#check if 3 points arent collinear w tolerance this means im not in line so move towards colinear point
             strategyData.my_desired_position = (startat)
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
-            return self.move(strategyData.my_desired_position, orientation=strategyData.ball_dir, avoid_obstacles=True)
+            # --- MODIFIED: Added timeout=999999 to "remove" timeout ---
+            return self.move(strategyData.my_desired_position, orientation=strategyData.ball_dir, avoid_obstacles=True, timeout=999999)
         
         elif strategyData.ball_dist > 0.5: #im now colinear so now go close enough to ball
             strategyData.point_in_direction(position, aim)
             strategyData.my_desired_position = (strategyData.ball_2d)
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
-            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
+            # --- MODIFIED: Added timeout=999999 to "remove" timeout ---
+            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, timeout=999999)
         
         else: #ball_dist is now less than 0.5 and im in line so i can move forward
             towards = strategyData.point_in_direction(position, aim, 4)
             strategyData.my_desired_position = (towards)
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
-            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=False)
+            # --- MODIFIED: Added timeout=999999 to "remove" timeout ---
+            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=False, timeout=999999)
     # --- END OF MERGED FUNCTION ---
 
     def think_and_send(self):
@@ -247,7 +250,12 @@ class Agent(Base_Agent):
 
         elif (strategyData.play_mode == self.world.M_OUR_GOAL_KICK):
             if strategyData.robot_model.unum == 1:
-                self.dribble(orientation=None)
+                # --- MODIFIED: Use dribbleToTarget ---
+                return self.dribbleToTarget(strategyData, 
+                                            MyNum=strategyData.robot_model.unum, 
+                                            position=strategyData.mypos, 
+                                            ball_pos=strategyData.ball_2d, 
+                                            aim=(15.5, 0)) # Aim for goal
         # --- END OF CHANGE ---
         else:
             # This is the FIX: Only call select_skill() if the game is in PlayOn
@@ -312,8 +320,8 @@ class Agent(Base_Agent):
         # Ensure our formation list also has 5 positions
         padded_formation = formation_positions[:5] 
         if len(padded_formation) < 5:
-             dummy_pos = np.array([-100.0, -100.0])
-             padded_formation = padded_formation + [dummy_pos] * (5 - len(padded_formation))
+            dummy_pos = np.array([-100.0, -100.0])
+            padded_formation = padded_formation + [dummy_pos] * (5 - len(padded_formation))
 
         point_preferences = role_assignment(padded_teammates, padded_formation)
         # --- END NEW 5-PLAYER LOGIC ---
@@ -337,10 +345,14 @@ class Agent(Base_Agent):
         # --- START OF CHANGE ---
         # Removed all pass/kick logic.
         # If not in formation, active player dribbles, others move.
-        if not strategyData.IsFormationReady(point_preferences):   
+        if not strategyData.IsFormationReady(point_preferences):     
             if strategyData.active_player_unum == strategyData.robot_model.unum:  # I am the active player
-                # Always dribble to the goal
-                return self.dribble(orientation=None)
+                # --- MODIFIED: Use dribbleToTarget ---
+                return self.dribbleToTarget(strategyData, 
+                                            MyNum=strategyData.robot_model.unum, 
+                                            position=strategyData.mypos, 
+                                            ball_pos=strategyData.ball_2d, 
+                                            aim=(15.5, 0)) # Aim for goal
             else:
                 # Follow formation
                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
@@ -354,8 +366,12 @@ class Agent(Base_Agent):
 
         # If in formation, active player dribbles, others move.
         if strategyData.active_player_unum == strategyData.robot_model.unum: # I am the active player 
-            # Always dribble to the goal
-            return self.dribble(orientation=None)
+            # --- MODIFIED: Use dribbleToTarget ---
+            return self.dribbleToTarget(strategyData, 
+                                        MyNum=strategyData.robot_model.unum, 
+                                        position=strategyData.mypos, 
+                                        ball_pos=strategyData.ball_2d, 
+                                        aim=(15.5, 0)) # Aim for goal
         else:
             # Check if self.player_unum is in point_preferences before accessing
             if strategyData.player_unum in point_preferences:
