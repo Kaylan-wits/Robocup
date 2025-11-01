@@ -286,6 +286,78 @@ class Agent(Base_Agent):
         path_draw_options = self.path_manager.draw_options
 
         target = (15,0) # Opponents Goal
+        
+        # --- START OF "STALL" EXPLOIT LOGIC (v9 - Hunter/Blocker) ---
+        
+        # 1. Define our roles
+        HUNTER_UNUM = 1                  # Player 1 will hunt Opp 5
+        SPOT_BLOCKER_UNUMS = [2, 4]      # Player 2 & 4 will block Opp 5's spot
+        TARGET_OPPONENT_INDEX = 4        # Target opponent player 5 (index 4)
+        
+        BALL_ATTACKER_UNUM = 5           # Your Striker 2
+        # Player 3 will fall through to normal logic
+        
+        my_unum = strategyData.robot_model.unum
+        
+        # This is the dummy position used in think_and_send to clean the list
+        default_pos = np.array([-100.0, -100.0]) 
+        
+        # 2. Define the fallback spot for Opponent 5 (from baseline's Formation.py)
+        #    Their Player 5 is at np.array([12, 0])
+        if strategyData.side == 0: # We are LEFT, opponent is RIGHT
+            # Opponent's formation is mirrored: (x, y) -> (-x, -y)
+            OPPONENT_5_SPOT = np.array([-12.0, 0.0])
+        else: # We are RIGHT, opponent is LEFT
+            # Opponent's formation is absolute
+            OPPONENT_5_SPOT = np.array([12.0, 0.0])
+
+
+        if my_unum == HUNTER_UNUM:
+            # --- HUNTER LOGIC ---
+            target_opp_pos = strategyData.opponent_positions[TARGET_OPPONENT_INDEX]
+
+            if not np.array_equal(target_opp_pos, default_pos):
+                # Opponent 5 is visible! Move to their position.
+                strategyData.my_desired_position = target_opp_pos
+                drawer.annotation(tuple(target_opp_pos), f"HUNTING OPP 5" , drawer.Color.red, "exploit")
+            else:
+                # Opponent 5 is NOT visible. Go to their known formation spot.
+                strategyData.my_desired_position = OPPONENT_5_SPOT
+                drawer.annotation(tuple(OPPONENT_5_SPOT), f"HUNTING OPP 5 (SPOT)" , drawer.Color.orange, "exploit")
+
+            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
+            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, timeout=999999)
+
+        elif my_unum in SPOT_BLOCKER_UNUMS:
+            # --- SPOT BLOCKER LOGIC ---
+            strategyData.my_desired_position = OPPONENT_5_SPOT # Default: go to the spot
+            drawer.annotation(tuple(OPPONENT_5_SPOT), f"BLOCKING OPP 5 SPOT" , drawer.Color.cyan, "exploit")
+
+            # Check if opp 5 is visible AND close to their spot
+            target_opp_pos = strategyData.opponent_positions[TARGET_OPPONENT_INDEX]
+            if not np.array_equal(target_opp_pos, default_pos):
+                # Check distance from opponent to their spot (4m^2 = 2m radius)
+                if np.sum((target_opp_pos - OPPONENT_5_SPOT) ** 2) < 4.0:
+                    # Opponent is close! Switch to pushing them.
+                    strategyData.my_desired_position = target_opp_pos
+                    drawer.annotation(tuple(target_opp_pos), f"PUSHING OPP 5" , drawer.Color.red, "exploit")
+            
+            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
+            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, timeout=999999)
+
+        elif my_unum == BALL_ATTACKER_UNUM:
+            # Your primary Attacker's job is to take the ball
+            drawer.annotation((0,10.5), "STALL: ATTACKING BALL" , drawer.Color.green, "status")
+            return self.dribbleToTarget(strategyData, 
+                                        MyNum=my_unum, 
+                                        position=strategyData.mypos, 
+                                        ball_pos=strategyData.ball_2d, 
+                                        aim=(15.5, 0)) # Aim for goal
+        
+        # --- END OF "STALL" EXPLOIT LOGIC ---
+
+        # --- ORIGINAL LOGIC (for Player 3 ONLY) ---
+        
         #------------------------------------------------------
         #Role Assignment
         formation_positions = []
@@ -304,7 +376,7 @@ class Agent(Base_Agent):
         current_teammates = strategyData.teammate_positions
         
         # Filter out any None or dummy values
-        valid_teammates = [pos for pos in current_teammates if pos is not None and not np.array_equal(pos, np.array([-100.0, -100.0]))]
+        valid_teammates = [pos for pos in current_teammates if pos is not None and not np.array_equal(pos, default_pos)]
         
         # 3. Handle if we don't see all 5 teammates (e.g., use dummy positions for unseen players)
         num_teammates_seen = len(valid_teammates)
@@ -380,8 +452,6 @@ class Agent(Base_Agent):
                 strategyData.my_desired_position = self.init_pos
             return self.move(strategyData.my_desired_position, orientation=strategyData.ball_dir)
         # --- END OF CHANGE ---
-
-    #--------------------------------------- Fat proxy auxiliary methods
 
     def fat_proxy_kick(self):
         w = self.world
