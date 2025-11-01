@@ -277,6 +277,54 @@ class Agent(Base_Agent):
             self.scom.commit_and_send( self.fat_proxy_cmd.encode() ) 
             self.fat_proxy_cmd = ""
 
+    def customDribbleAndShoot(self, strategyData):
+        '''
+        A custom, simple dribble that does not use the RL Dribble behavior.
+        It uses self.move to align with the ball and push it towards the goal.
+        1. Aligns behind the ball.
+        2. Moves through the ball to "push" it.
+        3. Shoots when in the shooting zone.
+        '''
+        GOAL_POS = (15.5, 0.0)      # Opponent goal
+        X_POSITION_TO_SHOOT = 11.0  # How close to goal before shooting
+        
+        my_pos = strategyData.mypos
+        ball_pos = strategyData.ball_2d
+        ball_dist = strategyData.ball_dist
+        
+        # 1. CHECK TO SHOOT
+        # If we are in the shooting zone AND have the ball, shoot.
+        if my_pos[0] > X_POSITION_TO_SHOOT and ball_dist < 0.5:
+            return self.kickTarget(strategyData, my_pos, GOAL_POS)
+
+        # 2. CHECK ALIGNMENT
+        # Check if the player, the ball, and the goal are in a straight line.
+        # We use a tolerance of 0.45 radians (from Strategy.py)
+        is_aligned = strategyData.are_points_collinear(my_pos, ball_pos, GOAL_POS, tolerance=0.45)
+        
+        if not is_aligned:
+            # STAGE 1: ALIGN
+            # We are NOT aligned. Get behind the ball.
+            # 'startat' is a point 0.2m behind the ball, on the line to the goal.
+            startat = strategyData.point_in_direction(ball_pos, GOAL_POS, -0.2)
+            # Move to this alignment spot, facing the ball
+            return self.move(startat, orientation=strategyData.ball_dir, avoid_obstacles=True, timeout=999999)
+        
+        elif ball_dist > 0.4:
+            # STAGE 2: APPROACH
+            # We ARE aligned, but too far to push. Move closer to the ball.
+            # Face the direction we want to go (goal)
+            goal_dir = strategyData.GetDirectionRelativeToMyPositionAndTarget(GOAL_POS)
+            return self.move(ball_pos, orientation=goal_dir, avoid_obstacles=True, timeout=999999)
+            
+        else:
+            # STAGE 3: PUSH
+            # We ARE aligned AND close enough. Push the ball forward.
+            # Calculate a target 4m ahead, towards the goal.
+            push_target = strategyData.point_in_direction(my_pos, GOAL_POS, 4)
+            goal_dir = strategyData.GetDirectionRelativeToMyPositionAndTarget(push_target)
+            # Move fast, don't avoid obstacles (since opponents are frozen)
+            return self.move(push_target, orientation=goal_dir, avoid_obstacles=False, timeout=999999)
 
     def select_skill(self,strategyData):
         #--------------------------------------- 2. Decide action
@@ -409,16 +457,11 @@ class Agent(Base_Agent):
         drawer.line(strategyData.mypos, strategyData.my_desired_position, 2,drawer.Color.blue,"target line")
 
         # --- START OF CHANGE ---
-        # Removed all pass/kick logic.
         # If not in formation, active player dribbles, others move.
         if not strategyData.IsFormationReady(point_preferences):     
             if strategyData.active_player_unum == strategyData.robot_model.unum:  # I am the active player
-                # --- MODIFIED: Use dribbleToTarget ---
-                return self.dribbleToTarget(strategyData, 
-                                            MyNum=strategyData.robot_model.unum, 
-                                            position=strategyData.mypos, 
-                                            ball_pos=strategyData.ball_2d, 
-                                            aim=(15.5, 0)) # Aim for goal
+                # --- MODIFIED: Use simpleDribbleAndShoot ---
+                return self.simpleDribbleAndShoot(strategyData)
             else:
                 # Follow formation
                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
@@ -432,12 +475,8 @@ class Agent(Base_Agent):
 
         # If in formation, active player dribbles, others move.
         if strategyData.active_player_unum == strategyData.robot_model.unum: # I am the active player 
-            # --- MODIFIED: Use dribbleToTarget ---
-            return self.dribbleToTarget(strategyData, 
-                                        MyNum=strategyData.robot_model.unum, 
-                                        position=strategyData.mypos, 
-                                        ball_pos=strategyData.ball_2d, 
-                                        aim=(15.5, 0)) # Aim for goal
+            # --- MODIFIED: Use simpleDribbleAndShoot ---
+            return self.simpleDribbleAndShoot(strategyData)
         else:
             # Check if self.player_unum is in point_preferences before accessing
             if strategyData.player_unum in point_preferences:
@@ -446,7 +485,6 @@ class Agent(Base_Agent):
                 strategyData.my_desired_position = self.init_pos
             return self.move(strategyData.my_desired_position, orientation=strategyData.ball_dir)
         # --- END OF CHANGE ---
-
     def fat_proxy_kick(self):
         w = self.world
         r = self.world.robot 
