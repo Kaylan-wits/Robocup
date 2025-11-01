@@ -36,9 +36,9 @@ class Agent(Base_Agent):
         init_positions_5 = [
             [-14, 0],   # 1: Goalie
             [-9, -3],   # 2: Left Defender
-            [-2.5, 1],  # 3: STRIKER 1 (Kicker) - Legal spot
+            [-2.1, 1.],  # 3: STRIKER 1 (Kicker) - Legal spot
             [-9, 3],    # 4: Right Defender
-            [-2.5, -1]  # 5: STRIKER 2 (Receiver/Charger) - Legal spot
+            [-2.2, 0]  # 5: STRIKER 2 (Receiver/Charger) - Legal spot
         ]
         self.init_pos = init_positions_5[unum-1] # initial formation
         
@@ -49,7 +49,7 @@ class Agent(Base_Agent):
         pos = self.init_pos[:] # copy position list 
         self.state = 0
         
- 
+
         # Avoid center circle by moving the player back 
         if avoid_center_circle and np.linalg.norm(self.init_pos) < 2.5:
             pos[0] = -2.3 
@@ -195,7 +195,6 @@ class Agent(Base_Agent):
         d = self.world.draw
         
         # Convert None positions to a default far-away location for calculations
-        # This is a safety check to prevent crashes if a player is not seen
         default_pos = np.array([-100.0, -100.0])
         strategyData.teammate_positions = [pos if pos is not None else default_pos for pos in strategyData.teammate_positions]
         strategyData.opponent_positions = [pos if pos is not None else default_pos for pos in strategyData.opponent_positions]
@@ -210,60 +209,45 @@ class Agent(Base_Agent):
         elif self.state == 1 or (behavior.is_ready("Get_Up") and self.fat_proxy_cmd is None):
             self.state = 0 if behavior.execute("Get_Up") else 1
 
-        elif (strategyData.PM_GROUP == self.world.MG_THEIR_KICK):
-            # USE ATTACKER (PLAYER 5) TO CHARGE
-            CHARGER_UNUM = 5 
-            
-            if strategyData.robot_model.unum == CHARGER_UNUM:
-                # Move to the edge of the center circle
-                self.move(target_2d=(-2.5, 0), orientation=strategyData.ball_dir)
-            else:
-                # All other players hold their initial position
-                self.move(self.init_pos, orientation=strategyData.ball_dir)
-
-
-        # --- START OF CHANGE ---
-        # Replaced kickTarget with dribble for set plays
         elif (strategyData.play_mode == self.world.M_OUR_KICKOFF):
-            # NEW AGGRESSIVE PLAN: Player 3 kicks the ball forward, and Player 5
-            # runs onto it from a legal starting position.
+            # This logic is correct and stays
             KICKER_UNUM = 3
             RECEIVER_UNUM = 5
-            
-            # The KICK'S target (in opponent's half)
-            KICK_TARGET_POS = (-0, -0.5)
-            # The RECEIVER'S legal starting spot (in our half)
-            RECEIVER_START_POS = (-1, -3) 
+            KICK_TARGET_POS = (1, 0)
+            RECEIVER_START_POS = (0, -1) 
             
             if strategyData.robot_model.unum == KICKER_UNUM:
-                # Move to ball and kick it to the forward target
                 self.kickTarget(strategyData, strategyData.mypos, KICK_TARGET_POS)
-                
             elif strategyData.robot_model.unum == RECEIVER_UNUM:
-                # Move to the legal "ready" spot and face the ball
                 self.move(target_2d=RECEIVER_START_POS, orientation=strategyData.ball_dir)
-                
             else:
-                # All other players (1, 2, 4) hold their initial position
                 self.move(self.init_pos, orientation=strategyData.ball_dir)
 
+        # --- THIS IS THE NEW LOGIC YOU ARE MISSING ---
+        # If it's their set piece, run our main attack logic to intercept
+        elif (strategyData.play_mode == self.world.M_THEIR_GOAL_KICK or
+              strategyData.play_mode == self.world.M_THEIR_FREE_KICK or
+              strategyData.play_mode == self.world.M_THEIR_KICK_IN or
+              strategyData.play_mode == self.world.M_THEIR_CORNER_KICK):
+            
+            self.select_skill(strategyData)
+        # --- END OF NEW LOGIC ---
 
-        elif (strategyData.play_mode == self.world.M_OUR_GOAL_KICK):
-            if strategyData.robot_model.unum == 1:
-                # --- MODIFIED: Use dribbleToTarget ---
-                return self.dribbleToTarget(strategyData, 
-                                            MyNum=strategyData.robot_model.unum, 
-                                            position=strategyData.mypos, 
-                                            ball_pos=strategyData.ball_2d, 
-                                            aim=(15.5, 0)) # Aim for goal
-        # --- END OF CHANGE ---
+        # --- "OUR SET PIECE" LOGIC (This STAYS) ---
+        elif (strategyData.play_mode == self.world.M_OUR_GOAL_KICK or
+              strategyData.play_mode == self.world.M_OUR_FREE_KICK or
+              strategyData.play_mode == self.world.M_OUR_KICK_IN or
+              strategyData.play_mode == self.world.M_OUR_CORNER_KICK):
+            
+            pass # Do nothing, wait for timeout
+        # -----------------------------------------------
+            
         else:
-            # This is the FIX: Only call select_skill() if the game is in PlayOn
+            # This is the main PlayOn logic
             if strategyData.play_mode == self.world.M_PLAY_ON:
                 self.select_skill(strategyData)
             else:
-                # This will now correctly do nothing during M_BEFORE_KICKOFF
-                # and all other unhandled modes, letting our kickoff logic work.
+                # This covers M_BEFORE_KICKOFF, MG_THEIR_KICK, etc.
                 pass
 
 
@@ -289,7 +273,7 @@ class Agent(Base_Agent):
         4. Moves through the ball to "push" it.
         '''
         # --- PARAMETERS ---
-        GOAL_POS = (15.5, 0.0)      # Opponent goal
+        GOAL_POS = (15.5, -0.3)      # Opponent goal
         X_POSITION_TO_SHOOT = 11.0  # How close to goal before shooting (for both players)
         
         # --- PASS LOGIC PARAMETERS ---
@@ -399,57 +383,56 @@ class Agent(Base_Agent):
 
         target = (15,0) # Opponents Goal
         
-        # --- START OF "STALL" EXPLOIT LOGIC (v10 - Strikers Normal) ---
+        # --- START OF 2v1 STALL EXPLOIT LOGIC ---
         
         # 1. Define our roles
-        HUNTER_UNUM = 1                  # Player 1 will hunt Opp 5
-        SPOT_BLOCKER_UNUMS = [2, 4]      # Player 2 & 4 will block Opp 5's spot
-        TARGET_OPPONENT_INDEX = 4        # Target opponent player 5 (index 4)
-        
-        # --- THIS IS THE FIX ---
-        # Players 3 and 5 are NOT listed. They will fall through
-        # to the original logic at the bottom.
+        HUNTER_UNUMS = [1]                # Player 1 is a full-time Hunter
+        SPOT_BLOCKER_UNUMS = [2, 4]       # Player 2 & 4 will block Opp 5's spot
+        TARGET_OPPONENT_INDEX = 4         # Target opponent player 5 (index 4)
         
         my_unum = strategyData.robot_model.unum
         
-        # This is the dummy position used in think_and_send to clean the list
         default_pos = np.array([-100.0, -100.0]) 
         
-        # 2. Define the fallback spot for Opponent 5 (from baseline's Formation.py)
-        #    Their Player 5 is at np.array([12, 0])
-        # 2. Define the fallback spot for Opponent 5
-        # The world is relative, so the opponent's goal is ALWAYS at x=15.
-        # This means their Player 5's formation spot is ALWAYS at x=12.
+        # The world is relative, so their Player 5's spot is ALWAYS at x=-12.
         OPPONENT_5_SPOT = np.array([-12.0, 0.0])
+        
+        
+        # --- NEW DYNAMIC ROLE FOR PLAYER 3 ---
+        # We check if Player 3 should be a Hunter or a Finisher
+        if my_unum == 3:
+            # IF the ball is still in the center circle (play just started)
+            if strategyData.ball_2d[0] < 1.0:
+                # THEN act as a Hunter
+                HUNTER_UNUMS.append(3)
+            # ELSE (ball is upfield), he is a Finisher
+            # and will "fall through" this logic to the attacker section.
+        
+        # --- END OF DYNAMIC ROLE ---
 
 
-        if my_unum == HUNTER_UNUM:
-            # --- HUNTER LOGIC ---
+        if my_unum in HUNTER_UNUMS:
+            # --- HUNTER LOGIC (for Player 1 and, conditionally, Player 3) ---
             target_opp_pos = strategyData.opponent_positions[TARGET_OPPONENT_INDEX]
 
             if not np.array_equal(target_opp_pos, default_pos):
-                # Opponent 5 is visible! Move to their position.
                 strategyData.my_desired_position = target_opp_pos
                 drawer.annotation(tuple(target_opp_pos), f"HUNTING OPP 5" , drawer.Color.red, "exploit")
             else:
-                # Opponent 5 is NOT visible. Go to their known formation spot.
                 strategyData.my_desired_position = OPPONENT_5_SPOT
-                drawer.annotation(tuple(OPPONENT_5_SPOT), f"HUNTING OPP 5 (SPOT)" , drawer.Color.orange, "exploit")
+                drawer.annotation(tuple(OPPONENT_5_SPOT), f"HNTING OPP 5 (SPOT)" , drawer.Color.orange, "exploit")
 
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, timeout=999999)
 
         elif my_unum in SPOT_BLOCKER_UNUMS:
-            # --- SPOT BLOCKER LOGIC ---
-            strategyData.my_desired_position = OPPONENT_5_SPOT # Default: go to the spot
+            # --- SPOT BLOCKER LOGIC (for Players 2 AND 4) ---
+            strategyData.my_desired_position = OPPONENT_5_SPOT 
             drawer.annotation(tuple(OPPONENT_5_SPOT), f"BLOCKING OPP 5 SPOT" , drawer.Color.cyan, "exploit")
 
-            # Check if opp 5 is visible AND close to their spot
             target_opp_pos = strategyData.opponent_positions[TARGET_OPPONENT_INDEX]
             if not np.array_equal(target_opp_pos, default_pos):
-                # Check distance from opponent to their spot (4m^2 = 2m radius)
                 if np.sum((target_opp_pos - OPPONENT_5_SPOT) ** 2) < 4.0:
-                    # Opponent is close! Switch to pushing them.
                     strategyData.my_desired_position = target_opp_pos
                     drawer.annotation(tuple(target_opp_pos), f"PUSHING OPP 5" , drawer.Color.red, "exploit")
             
@@ -457,43 +440,33 @@ class Agent(Base_Agent):
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, timeout=999999)
 
         # --- END OF "STALL" EXPLOIT LOGIC ---
-        # Players 3 and 5 will now execute the code below.
+        # Player 5 (always) and Player 3 (conditionally)
+        # will now execute the attacker code below.
         
 
-        # --- ORIGINAL LOGIC (for Player 3 AND 5) ---
+        # --- ATTACKER LOGIC (for Player 5 and Player 3) ---
         
         #------------------------------------------------------
         #Role Assignment
         formation_positions = []
-        if strategyData.active_player_unum == strategyData.robot_model.unum: # I am the active player 
+        if strategyData.active_player_unum == strategyData.robot_model.unum: 
             drawer.annotation((0,10.5), "Role Assignment Phase" , drawer.Color.yellow, "status")
         else:
-            drawer.clear("status")    
+            drawer.clear("status")     
 
 
         # --- NEW 5-PLAYER FORMATION LOGIC ---
-        
-        # 1. Select the best 5-player formation based on the ball's X position
         formation_positions = GenerateFormation_5(strategyData.ball_2d[0])
-
-        # 2. Get the list of our 5 teammates
         current_teammates = strategyData.teammate_positions
-        
-        # Filter out any None or dummy values
         valid_teammates = [pos for pos in current_teammates if pos is not None and not np.array_equal(pos, default_pos)]
         
-        # 3. Handle if we don't see all 5 teammates (e.g., use dummy positions for unseen players)
         num_teammates_seen = len(valid_teammates)
         if num_teammates_seen < 5:
-            # Note: This simple padding might not be ideal, but it matches the old logic.
-            # It's better to use last-known positions if possible.
             dummy_pos = np.array([-100.0, -100.0]) 
             padded_teammates = valid_teammates + [dummy_pos] * (5 - num_teammates_seen)
         else:
-            padded_teammates = valid_teammates[:5] # Use the first 5 seen
+            padded_teammates = valid_teammates[:5]
 
-        # 4. Call the 5-player role_assignment
-        # Ensure our formation list also has 5 positions
         padded_formation = formation_positions[:5] 
         if len(padded_formation) < 5:
             dummy_pos = np.array([-100.0, -100.0])
@@ -505,48 +478,44 @@ class Agent(Base_Agent):
         if strategyData.active_player_unum == strategyData.robot_model.unum:  # I am the active player
             if strategyData.min_teammate_ball_dist < strategyData.min_opponent_ball_dist:
                 if 0.0 <=strategyData.ball_speed <= 0.0:
-                    strategyData.my_desired_position = strategyData.ball_2d   # Go to the ball
+                    strategyData.my_desired_position = strategyData.ball_2d
                     strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.ball_2d)  
         else:
-            # Check if self.player_unum is in point_preferences before accessing
             if strategyData.player_unum in point_preferences:
-                strategyData.my_desired_position = point_preferences[strategyData.player_unum]  # Follow formation
+                strategyData.my_desired_position = point_preferences[strategyData.player_unum]
             else:
-                # Fallback: if not assigned, just go to init_pos
                 strategyData.my_desired_position = self.init_pos
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.ball_2d)
 
         drawer.line(strategyData.mypos, strategyData.my_desired_position, 2,drawer.Color.blue,"target line")
 
-        # --- START OF CHANGE ---
-        # If not in formation, active player dribbles, others move.
         if not strategyData.IsFormationReady(point_preferences):     
             if strategyData.active_player_unum == strategyData.robot_model.unum:  # I am the active player
-                # --- MODIFIED: Use customDribbleAndShoot ---
                 return self.customDribbleAndShoot(strategyData)
             else:
-                # Follow formation
                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
         
         #------------------------------------------------------
         #Pass Selector
-        if strategyData.active_player_unum == strategyData.robot_model.unum: # I am the active player 
-            drawer.annotation((0,10.5), "Dribbling to Goal" , drawer.Color.green, "status") # Changed status
+        if strategyData.active_player_unum == strategyData.robot_model.unum: 
+            drawer.annotation((0,10.5), "Dribbling to Goal" , drawer.Color.green, "status")
         else:
             drawer.clear_player()
 
-        # If in formation, active player dribbles, others move.
         if strategyData.active_player_unum == strategyData.robot_model.unum: # I am the active player 
-            # --- MODIFIED: Use customDribbleAndShoot ---
             return self.customDribbleAndShoot(strategyData)
         else:
-            # Check if self.player_unum is in point_preferences before accessing
             if strategyData.player_unum in point_preferences:
                 strategyData.my_desired_position = point_preferences[strategyData.player_unum]
             else:
                 strategyData.my_desired_position = self.init_pos
             return self.move(strategyData.my_desired_position, orientation=strategyData.ball_dir)
+
+
         # --- END OF CHANGE ---
+
+
+        
     def fat_proxy_kick(self):
         w = self.world
         r = self.world.robot 
