@@ -460,8 +460,8 @@ class Agent(Base_Agent):
         # If not in formation, active player dribbles, others move.
         if not strategyData.IsFormationReady(point_preferences):     
             if strategyData.active_player_unum == strategyData.robot_model.unum:  # I am the active player
-                # --- MODIFIED: Use simpleDribbleAndShoot ---
-                return self.simpleDribbleAndShoot(strategyData)
+                # --- MODIFIED: Use customDribbleAndShoot ---
+                return self.customDribbleAndShoot(strategyData)
             else:
                 # Follow formation
                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
@@ -475,8 +475,8 @@ class Agent(Base_Agent):
 
         # If in formation, active player dribbles, others move.
         if strategyData.active_player_unum == strategyData.robot_model.unum: # I am the active player 
-            # --- MODIFIED: Use simpleDribbleAndShoot ---
-            return self.simpleDribbleAndShoot(strategyData)
+            # --- MODIFIED: Use customDribbleAndShoot ---
+            return self.customDribbleAndShoot(strategyData)
         else:
             # Check if self.player_unum is in point_preferences before accessing
             if strategyData.player_unum in point_preferences:
