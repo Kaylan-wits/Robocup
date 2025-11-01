@@ -287,15 +287,16 @@ class Agent(Base_Agent):
 
         target = (15,0) # Opponents Goal
         
-        # --- START OF "STALL" EXPLOIT LOGIC (v9 - Hunter/Blocker) ---
+        # --- START OF "STALL" EXPLOIT LOGIC (v10 - Strikers Normal) ---
         
         # 1. Define our roles
         HUNTER_UNUM = 1                  # Player 1 will hunt Opp 5
         SPOT_BLOCKER_UNUMS = [2, 4]      # Player 2 & 4 will block Opp 5's spot
         TARGET_OPPONENT_INDEX = 4        # Target opponent player 5 (index 4)
         
-        BALL_ATTACKER_UNUM = 5           # Your Striker 2
-        # Player 3 will fall through to normal logic
+        # --- THIS IS THE FIX ---
+        # Players 3 and 5 are NOT listed. They will fall through
+        # to the original logic at the bottom.
         
         my_unum = strategyData.robot_model.unum
         
@@ -345,18 +346,11 @@ class Agent(Base_Agent):
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, timeout=999999)
 
-        elif my_unum == BALL_ATTACKER_UNUM:
-            # Your primary Attacker's job is to take the ball
-            drawer.annotation((0,10.5), "STALL: ATTACKING BALL" , drawer.Color.green, "status")
-            return self.dribbleToTarget(strategyData, 
-                                        MyNum=my_unum, 
-                                        position=strategyData.mypos, 
-                                        ball_pos=strategyData.ball_2d, 
-                                        aim=(15.5, 0)) # Aim for goal
-        
         # --- END OF "STALL" EXPLOIT LOGIC ---
+        # Players 3 and 5 will now execute the code below.
+        
 
-        # --- ORIGINAL LOGIC (for Player 3 ONLY) ---
+        # --- ORIGINAL LOGIC (for Player 3 AND 5) ---
         
         #------------------------------------------------------
         #Role Assignment
