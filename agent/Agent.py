@@ -403,19 +403,29 @@ class Agent(Base_Agent):
         # --- END MODIFICATION ---
 
         # --- MODIFICATION: New block for Player 3 (Left Blocker) ---
+        # --- MODIFICATION: New 2-STAGE block for Player 3 (Left Blocker) ---
         elif my_unum == LEFT_BLOCKER_UNUM:
             # --- "LEFT BLOCKER" LOGIC (Player 3) ---
-            # Stand 0.3m to the "left" of the spot (positive Y)
-
-            # --- ORIENTATION CHANGE: Face straight up (+Y) ---
-            desired_orientation_degs = -90.0
-            # --- END ORIENTATION CHANGE ---
-            
-            # Target position is (spot.x, spot.y + 0.3)
+            desired_orientation_degs = -90.0 # Face +Y
             player_3_target = OPPONENT_5_SPOT + np.array([0, 0.33]) # +0.3 is "left"
             
-            strategyData.my_desired_position = player_3_target
-            drawer.annotation(tuple(player_3_target), f"LEFT BLOCK (FACE +Y)" , drawer.Color.green, "exploit") # Added new color
+            # Check distance to the target spot
+            dist_to_target = np.linalg.norm(strategyData.mypos - player_3_target)
+
+            # STAGE 1: MOVE (if we are far from the spot)
+            # We run straight at the target first, this is faster.
+            if dist_to_target > 0.15: # 15cm tolerance
+                # Move to the spot, but face the spot itself
+                orientation_to_target = strategyData.GetDirectionRelativeToMyPositionAndTarget(player_3_target)
+                drawer.annotation(tuple(player_3_target), f"MOVING: LEFT BLOCK" , drawer.Color.green, "exploit")
+                return self.move(player_3_target, orientation=orientation_to_target, is_orientation_absolute=True, timeout=999999)
+            
+            # STAGE 2: TURN (we are at the spot, now turn)
+            # We are close enough, so now we stop and face the correct direction.
+            else:
+                drawer.annotation(tuple(player_3_target), f"BLOCKING (FACE +Y)" , drawer.Color.green, "exploit")
+                return self.move(player_3_target, orientation=desired_orientation_degs, is_orientation_absolute=True, timeout=999999)
+        # --- END MODIFICATION ---
 
             # Call move with the specific orientation, standing still
             return self.move(
