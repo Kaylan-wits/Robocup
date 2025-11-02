@@ -198,6 +198,16 @@ class Agent(Base_Agent):
         strategyData.teammate_positions = [pos if pos is not None else default_pos for pos in strategyData.teammate_positions]
         strategyData.opponent_positions = [pos if pos is not None else default_pos for pos in strategyData.opponent_positions]
 
+        # --- KICKOFF PARAMETERS (we define them once up here) ---
+        KICKER_UNUM = 3
+        RECEIVER_UNUM = 5
+        KICK_TARGET_POS = (1, 0)
+        RECEIVER_START_POS = (0, -1) 
+        
+        # --- YOUR NEW STATE CHECK ---
+        # Check if the ball is still at the center (within 0.5m)
+        ball_at_center = np.linalg.norm(strategyData.ball_2d) < 0.5
+
 
         if strategyData.play_mode == self.world.M_GAME_OVER:
             pass
@@ -208,46 +218,58 @@ class Agent(Base_Agent):
         elif self.state == 1 or (behavior.is_ready("Get_Up") and self.fat_proxy_cmd is None):
             self.state = 0 if behavior.execute("Get_Up") else 1
 
-        # --- THIS IS YOUR KICKOFF LOGIC ---
+        # --- OUR_KICKOFF (Stays the same, with Player 3 kicking) ---
         elif (strategyData.play_mode == self.world.M_OUR_KICKOFF):
-            # This logic is correct and stays
-            KICKER_UNUM = 3
-            RECEIVER_UNUM = 5
-            KICK_TARGET_POS = (1, 0)
-            RECEIVER_START_POS = (0, -1) 
-            
             if strategyData.robot_model.unum == KICKER_UNUM:
                 self.kickTarget(strategyData, strategyData.mypos, KICK_TARGET_POS)
             elif strategyData.robot_model.unum == RECEIVER_UNUM:
                 self.move(target_2d=RECEIVER_START_POS, orientation=strategyData.ball_dir)
             else:
                 self.move(self.init_pos, orientation=strategyData.ball_dir)
-        # --- END OF KICKOFF LOGIC ---
 
-        # If it's their set piece, run our main attack logic to intercept
+
         elif (strategyData.play_mode == self.world.M_THEIR_GOAL_KICK or
               strategyData.play_mode == self.world.M_THEIR_FREE_KICK or
               strategyData.play_mode == self.world.M_THEIR_KICK_IN or
               strategyData.play_mode == self.world.M_THEIR_CORNER_KICK):
             
             self.select_skill(strategyData)
-        # --- END OF NEW LOGIC ---
 
-        # --- "OUR SET PIECE" LOGIC (This STAYS) ---
         elif (strategyData.play_mode == self.world.M_OUR_GOAL_KICK or
               strategyData.play_mode == self.world.M_OUR_FREE_KICK or
               strategyData.play_mode == self.world.M_OUR_KICK_IN or
               strategyData.play_mode == self.world.M_OUR_CORNER_KICK):
             
             pass # Do nothing, wait for timeout
-        # -----------------------------------------------
             
         else:
             # This is the main PlayOn logic
             if strategyData.play_mode == self.world.M_PLAY_ON:
-                self.select_skill(strategyData)
+                
+                # --- START OF YOUR NEW LOGIC ---
+                # IF: It's PlayOn
+                # AND: The ball is still at the center
+                if ball_at_center:
+                    
+                    # RUN "THEIR KICKOFF" PLAY
+                    # (This is your new idea)
+                    if strategyData.robot_model.unum == 5:
+                        # Player 5 (Attacker) charges the ball
+                        self.kickTarget(strategyData, strategyData.mypos, KICK_TARGET_POS)
+                    else:
+                        # All other players (1, 2, 3, 4) run select_skill
+                        # to go to their "jail" spots immediately.
+                        self.select_skill(strategyData)
+                
+                else:
+                    # EITHER: It's normal play
+                    # OR: The ball has been kicked from center
+                    # -> Run the normal logic
+                    self.select_skill(strategyData)
+                # --- END OF YOUR NEW LOGIC ---
+
             else:
-                # This covers M_BEFORE_KICKOFF, MG_THEIR_KICK, etc.
+                # This covers M_BEFORE_KICKOFF, etc.
                 pass
 
 
@@ -266,23 +288,41 @@ class Agent(Base_Agent):
 
     def customDribbleAndShoot(self, strategyData):
         '''
-        This is the "good old" dribble function (tolerance=0.45)
+        This is your "good old" dribble function (tolerance=0.45)
         simplified to remove all unnecessary pass/keeper logic.
+        
+        ADDED: "Tap-in" logic.
         '''
         # --- PARAMETERS ---
-        GOAL_POS = (15.5, -0.3)      # Opponent goal
+        GOAL_POS = (15.5, 0.7)      # Aim for the TOP corner
         X_POSITION_TO_SHOOT = 11.0  # How close to goal before shooting (for both players)
-
+        
         # --- Get current data ---
         my_pos = strategyData.mypos
         my_unum = strategyData.robot_model.unum
         ball_pos = strategyData.ball_2d
         ball_dist = strategyData.ball_dist
 
-        # --- ALL PASS/KEEPER LOGIC HAS BEEN REMOVED ---
+        # --- "TAP-IN" PARAMETERS ---
+        opp_keeper_pos = strategyData.opponent_positions[0] # Keeper is Player 1 (index 0)
+        TAP_IN_X_POS = 14.0 # How close to goal (X) to start walking it in
+        PUSH_DIST = 0.4     # How close ball must be to be "pushing"
+
+        # --- START OF "TAP-IN" LOGIC ---
+        is_in_shoot_x_zone = my_pos[0] > X_POSITION_TO_SHOOT
+        is_at_goal_mouth = my_pos[0] > TAP_IN_X_POS 
+        is_past_keeper = my_pos[0] > opp_keeper_pos[0]
+        has_ball = ball_dist <= PUSH_DIST
+
+        if is_at_goal_mouth and is_past_keeper and has_ball:
+            # We are past the keeper and at the goal. Just walk it in.
+            goal_dir = strategyData.GetDirectionRelativeToMyPositionAndTarget(GOAL_POS)
+            return self.move(GOAL_POS, orientation=goal_dir, avoid_obstacles=False, timeout=999999)
+        # --- END OF "TAP-IN" LOGIC ---
+
 
         # 1. CHECK TO SHOOT
-        # If we are in the shooting zone AND have the ball, shoot.
+        # If the "tap-in" failed, we fall back to a normal kick.
         if my_pos[0] > X_POSITION_TO_SHOOT and ball_dist < 0.5:
             return self.kickTarget(strategyData, my_pos, GOAL_POS)
 
@@ -332,10 +372,11 @@ class Agent(Base_Agent):
         path_draw_options = self.path_manager.draw_options
 
         target = (15,0) # Opponents Goal
+
+        DISTANCE_TOLERANCE = 0.15
         
         # --- NEW ---
-        SPIN_INCREMENT_DEGS = 15.0  # Degrees to turn each frame for spinning
-        DISTANCE_TOLERANCE = 0.15   # How close to get before spinning (in meters)
+        # REMOVED SPIN_INCREMENT_DEGS and DISTANCE_TOLERANCE
         # --- END NEW ---
         
         # --- START OF 2v1 STALL EXPLOIT LOGIC ---
@@ -382,64 +423,56 @@ class Agent(Base_Agent):
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, timeout=999999)
 
-        # --- MODIFICATION: New block for Player 1 (Right Blocker) ---
+        # --- MODIFICATION: Player 1 (Right Blocker) ---
         elif my_unum == RIGHT_BLOCKER_UNUM:
             # --- "RIGHT BLOCKER" LOGIC (Player 1) ---
-            # Stand 0.3m to the "right" of the spot (negative Y)
-            
-            # Target position is (spot.x, spot.y - 0.3)
             player_1_target = OPPONENT_5_SPOT + np.array([0, -0.265]) # -0.3 is "right"
             
-            # --- MODIFIED: Check distance before spinning ---
-            distance_to_target = np.linalg.norm(np.array(strategyData.mypos) - player_1_target)
-            
-            if distance_to_target < DISTANCE_TOLERANCE:
-                # We are at the spot, so spin
-                desired_orientation_degs = M.normalize_deg(strategyData.my_ori + SPIN_INCREMENT_DEGS)
-                drawer.annotation(tuple(player_1_target), f"RIGHT BLOCK (SPIN)" , drawer.Color.red, "exploit")
-            else:
-                # We are moving, so face the spot
-                desired_orientation_degs = strategyData.GetDirectionRelativeToMyPositionAndTarget(OPPONENT_5_SPOT)
-                drawer.annotation(tuple(player_1_target), f"RIGHT BLOCK (MOVING)" , drawer.Color.red, "exploit")
+            # --- MODIFIED: Removed spin logic ---
+            desired_orientation_degs = 90.0 # Face -Y
+            drawer.annotation(tuple(player_1_target), f"RIGHT BLOCK (FACE -Y)" , drawer.Color.red, "exploit")
             # --- END MODIFICATION ---
             
             strategyData.my_desired_position = player_1_target
 
-            # Call move with the specific orientation, standing still
             return self.move(
                 strategyData.my_desired_position, 
                 orientation=desired_orientation_degs, 
                 is_orientation_absolute=True,
                 avoid_obstacles=True,
-                is_aggressive=False, # Strictly stand there
+                is_aggressive=False,
                 timeout=999999
             )
         # --- END MODIFICATION ---
 
+        # --- MODIFICATION: Player 3 (Left Blocker) ---
         # --- MODIFICATION: New block for Player 3 (Left Blocker) ---
         elif my_unum == LEFT_BLOCKER_UNUM:
             # --- "LEFT BLOCKER" LOGIC (Player 3) ---
-            # Stand 0.3m to the "left" of the spot (positive Y)
             
-            # Target position is (spot.x, spot.y + 0.3)
+            # This is the final target position and orientation
             player_3_target = OPPONENT_5_SPOT + np.array([0, 0.265]) # +0.3 is "left"
-
-            # --- MODIFIED: Check distance before spinning ---
+            final_orientation_degs = -90.0 # Face +Y
+            
+            # Check distance to the target spot
             distance_to_target = np.linalg.norm(np.array(strategyData.mypos) - player_3_target)
-
+            
+            # --- START OF 2-STAGE FIX ---
             if distance_to_target < DISTANCE_TOLERANCE:
-                # We are at the spot, so spin
-                desired_orientation_degs = M.normalize_deg(strategyData.my_ori + SPIN_INCREMENT_DEGS)
-                drawer.annotation(tuple(player_3_target), f"LEFT BLOCK (SPIN)" , drawer.Color.green, "exploit")
+                # STAGE 2: TURN
+                # We are at the spot, so stop moving and face the final direction
+                desired_orientation_degs = final_orientation_degs
+                drawer.annotation(tuple(player_3_target), f"LEFT BLOCK (TURNING)" , drawer.Color.green, "exploit")
             else:
-                # We are moving, so face the spot
-                desired_orientation_degs = strategyData.GetDirectionRelativeToMyPositionAndTarget(OPPONENT_5_SPOT)
+                # STAGE 1: MOVE
+                # We are far, so move directly *at* the target (this is faster)
+                desired_orientation_degs = strategyData.GetDirectionRelativeToMyPositionAndTarget(player_3_target)
                 drawer.annotation(tuple(player_3_target), f"LEFT BLOCK (MOVING)" , drawer.Color.green, "exploit")
-            # --- END MODIFICATION ---
+            # --- END OF 2-STAGE FIX ---
             
             strategyData.my_desired_position = player_3_target
 
-            # Call move with the specific orientation, standing still
+            # Call move with the dynamically set orientation
             return self.move(
                 strategyData.my_desired_position, 
                 orientation=desired_orientation_degs, 
@@ -450,80 +483,54 @@ class Agent(Base_Agent):
             )
         # --- END MODIFICATION ---
 
-        # --- MODIFICATION: New block for Player 4 (Front Blocker) ---
+        # --- MODIFICATION: Player 4 (Front Blocker) ---
         elif my_unum == FRONT_BLOCKER_UNUM:
             # --- "FRONT BLOCKER" LOGIC (Player 4) ---
-            # Stand 0.3m "in front" of the spot (closer to our net)
-            
-            # Use point_in_direction: A positive distance moves *towards* the goal
-            # This calculates a spot 0.3m towards our net from the spot
             player_4_target = strategyData.point_in_direction(
                 position=OPPONENT_5_SPOT, 
                 goal=OUR_NET_POS, 
                 distance=0.265 # 0.3m "in front"
             )
 
-            # --- MODIFIED: Check distance before spinning ---
-            distance_to_target = np.linalg.norm(np.array(strategyData.mypos) - player_4_target)
-
-            if distance_to_target < DISTANCE_TOLERANCE:
-                # We are at the spot, so spin
-                desired_orientation_degs = M.normalize_deg(strategyData.my_ori + SPIN_INCREMENT_DEGS)
-                drawer.annotation(tuple(player_4_target), f"FRONT BLOCK (SPIN)" , drawer.Color.blue, "exploit")
-            else:
-                # We are moving, so face our net
-                desired_orientation_degs = M.target_abs_angle(strategyData.mypos, OUR_NET_POS)
-                drawer.annotation(tuple(player_4_target), f"FRONT BLOCK (MOVING)" , drawer.Color.blue, "exploit")
+            # --- MODIFIED: Removed spin logic ---
+            desired_orientation_degs = M.target_abs_angle(strategyData.mypos, OUR_NET_POS)
+            drawer.annotation(tuple(player_4_target), f"FRONT BLOCK (FACE NET)" , drawer.Color.blue, "exploit")
             # --- END MODIFICATION ---
             
             strategyData.my_desired_position = player_4_target
 
-            # Call move with the specific orientation, standing still
             return self.move(
                 strategyData.my_desired_position, 
                 orientation=desired_orientation_degs, 
                 is_orientation_absolute=True,
                 avoid_obstacles=True,
-                is_aggressive=False, # Strictly stand there
+                is_aggressive=False,
                 timeout=999999
             )
         # --- END MODIFICATION ---
 
-        # --- MODIFICATION: New block for Player 2 (Back Blocker) ---
+        # --- MODIFICATION: Player 2 (Back Blocker) ---
         elif my_unum == BACK_BLOCKER_UNUM:
             # --- "BACK BLOCKER" LOGIC (Player 2) ---
-            # Stand 0.3m "behind" the spot (further from our net)
-            
-            # Use point_in_direction: A negative distance moves *away* from the goal
-            # This calculates a spot 0.3m away from our net from the spot
             player_2_target = strategyData.point_in_direction(
                 position=OPPONENT_5_SPOT, 
                 goal=OUR_NET_POS, 
                 distance=-0.265 # 0.3m "behind"
             )
             
-            # --- MODIFIED: Check distance before spinning ---
-            distance_to_target = np.linalg.norm(np.array(strategyData.mypos) - player_2_target)
-            
-            if distance_to_target < DISTANCE_TOLERANCE:
-                # We are at the spot, so spin
-                desired_orientation_degs = M.normalize_deg(strategyData.my_ori + SPIN_INCREMENT_DEGS)
-                drawer.annotation(tuple(player_2_target), f"BACK BLOCK (SPIN)" , drawer.Color.cyan, "exploit")
-            else:
-                # We are moving, so face our net
-                desired_orientation_degs = M.target_abs_angle(strategyData.mypos, OUR_NET_POS)
-                drawer.annotation(tuple(player_2_target), f"BACK BLOCK (MOVING)" , drawer.Color.cyan, "exploit")
+            # --- MODIFIED: Removed spin logic ---
+            desired_orientation_degs = M.target_abs_angle(strategyData.mypos, OUR_NET_POS)
+            drawer.annotation(tuple(player_2_target), f"BACK BLOCK (FACE NET)" , drawer.Color.cyan, "exploit")
             # --- END MODIFICATION ---
             
             strategyData.my_desired_position = player_2_target
             
-            # Call move with the specific orientation, standing still
             return self.move(
                 strategyData.my_desired_position, 
                 orientation=desired_orientation_degs, 
                 is_orientation_absolute=True,
                 avoid_obstacles=True,
-                is_aggressive=False, # Strictly stand there
+                is_aggressive=False,
                 timeout=999999
             )
         # --- END MODIFICATION ---
