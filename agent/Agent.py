@@ -273,8 +273,11 @@ class Agent(Base_Agent):
         4. Moves through the ball to "push" it.
         '''
         # --- PARAMETERS ---
-        GOAL_POS = (15.5, -0.3)      # Opponent goal
-        X_POSITION_TO_SHOOT = 11.0  # How close to goal before shooting (for both players)
+        GOAL_POS = (15.5, -0.3)      # Your Opponent goal target
+        X_POSITION_TO_SHOOT = 11.0  # How close to goal before shooting
+        
+        # --- FIX #3: SHOOTING CHANNEL (Your new value) ---
+        Y_SHOOTING_CHANNEL = 2.0    # Must be within y=2.0 and y=-2.0 to shoot
         
         # --- PASS LOGIC PARAMETERS ---
         PASSER_UNUM = 5             # Player 5 is now the Passer
@@ -282,6 +285,9 @@ class Agent(Base_Agent):
         ATTACK_ZONE_X = 10.0        # X-line to be considered "in the zone"
         KEEPER_SPOT_TOLERANCE = 1.5 # How far keeper must move from their spot to be "awake"
         MIN_PASS_SEPARATION = 2.5   # Player 3 must be at least 2.5m away (laterally)
+
+        # --- FIX #2: GOALKEEPER THREAT ZONE (Your new logic) ---
+        KEEPER_THREAT_ZONE_RADIUS = 2.0  # 2-unit radius around the keeper's default spot
         
         # --- Get current data ---
         my_pos = strategyData.mypos
@@ -297,32 +303,32 @@ class Agent(Base_Agent):
             opp_keeper_pos = strategyData.opponent_positions[0]
             
             # Find the keeper's "stuck" spot
-            # The world is relative, so the opponent's goal is ALWAYS at x=15.
             OPPONENT_KEEPER_SPOT = np.array([14.0, 0.0]) # Their goal line
                 
-            # Check if keeper is moving (is more than 1.5m from their stuck spot)
-            is_keeper_rushing = np.linalg.norm(opp_keeper_pos - OPPONENT_KEEPER_SPOT) > KEEPER_SPOT_TOLERANCE
+            # --- FIX #2: REVISED KEEPER LOGIC (Your logic) ---
+            # 1. Check if keeper is frozen in their spot
+            is_keeper_frozen = np.linalg.norm(opp_keeper_pos - OPPONENT_KEEPER_SPOT) <= KEEPER_SPOT_TOLERANCE
             
+            # 2. Check if keeper is AWAKE but still INSIDE their "threat zone"
+            keeper_dist_from_spot = np.linalg.norm(opp_keeper_pos - OPPONENT_KEEPER_SPOT)
+            is_keeper_a_threat = (not is_keeper_frozen) and (keeper_dist_from_spot < KEEPER_THREAT_ZONE_RADIUS)
+            # --- END FIX #2 ---
+
             # Check if both strikers are in the attack zone
             am_i_in_zone = my_pos[0] > ATTACK_ZONE_X
             is_finisher_in_zone = finisher_pos[0] > ATTACK_ZONE_X
 
-            # --- START OF "GOOD POSITION" CHECK (combining both ideas) ---
-            
-            # 1. Check if finisher is far enough away (laterally)
+            # "GOOD POSITION" CHECK
             is_laterally_separated = abs(finisher_pos[1] - my_pos[1]) > MIN_PASS_SEPARATION
-            
-            # 2. Check if finisher is on the "far post" (opposite side of field center)
-            # This is true if their Y positions have opposite signs.
             is_on_far_post = (finisher_pos[1] * my_pos[1]) < 0
-
-            # Both must be true for a "good pass"
             is_finisher_in_good_pos = is_finisher_in_zone and is_laterally_separated and is_on_far_post
 
-            # --- END OF "GOOD POSITION" CHECK ---
-
-            # If keeper is rushing AND we have the ball AND we are in the zone AND the finisher is in a good spot...
-            if is_keeper_rushing and ball_dist < 0.5 and am_i_in_zone and is_finisher_in_good_pos:
+            # NEW PASS CONDITION:
+            # Pass ONLY IF:
+            #   1. The keeper IS a threat (awake AND in their zone)
+            #   2. AND I have the ball
+            #   3. AND my teammate is in a good spot
+            if is_keeper_a_threat and (ball_dist < 0.5) and am_i_in_zone and is_finisher_in_good_pos:
                 # ...PASS to the other striker (The Finisher)
                 return self.kickTarget(strategyData, my_pos, finisher_pos)
         
@@ -331,32 +337,35 @@ class Agent(Base_Agent):
         # and fall through to the dribble/shoot logic below.
         
 
+        # --- FIX #3: "SHOOTING CHANNEL" LOGIC (Your new value) ---
+        is_in_shoot_x_zone = my_pos[0] > X_POSITION_TO_SHOOT
+        is_in_shoot_y_channel = abs(my_pos[1]) < Y_SHOOTING_CHANNEL
+
         # 1. CHECK TO SHOOT
-        # If we are in the shooting zone AND have the ball, shoot.
-        if my_pos[0] > X_POSITION_TO_SHOOT and ball_dist < 0.5:
+        # Shoot if in X zone AND in Y channel AND have the ball
+        if is_in_shoot_x_zone and is_in_shoot_y_channel and ball_dist < 0.5:
             return self.kickTarget(strategyData, my_pos, GOAL_POS)
+        # --- END FIX #3 ---
 
-        # --- START OF DRIBBLE "STUCK" FIX ---
 
-        # 2. CHECK ALIGNMENT
-        # Check if the player, the ball, and the goal are in a straight line.
-        is_aligned = strategyData.are_points_collinear(my_pos, ball_pos, GOAL_POS, tolerance=0.45)
+        # --- FIX #1: "U-TURN" / "SCRAPPY DRIBBLE" FIX ---
         
-        # Check if we are aligned BUT IN FRONT of the ball (i.e., ball is behind us)
+        # --- START OF CHANGE ---
+        # Tighter tolerance forces better alignment before PUSH stage
+        is_aligned = strategyData.are_points_collinear(my_pos, ball_pos, GOAL_POS, tolerance=0.2)
+        # --- END OF CHANGE ---
+
         is_in_front_of_ball = is_aligned and my_pos[0] > ball_pos[0] and my_pos[0] < GOAL_POS[0]
 
-        # We must align IF:
-        #   a) We are not aligned at all
-        #   b) We ARE aligned, but we are in front of the ball (and not right on top of it)
+        # Using ball_dist > 0.4 for a "sticky" PUSH state
         if (not is_aligned) or (is_in_front_of_ball and ball_dist > 0.4):
             # STAGE 1: ALIGN
-            # 'startat' is a point 0.2m behind the ball, on the line to the goal.
-            startat = strategyData.point_in_direction(ball_pos, GOAL_POS, -0.2)
+            # Using startat = -0.4 to give space for U-Turns
+            startat = strategyData.point_in_direction(ball_pos, GOAL_POS, -0.4)
             # Move to this alignment spot, facing the ball
             return self.move(startat, orientation=strategyData.ball_dir, avoid_obstacles=True, timeout=999999)
         
-        # --- END OF DRIBBLE "STUCK" FIX ---
-        
+        # Using ball_dist > 0.4
         elif ball_dist > 0.4:
             # STAGE 2: APPROACH
             # We ARE aligned AND behind the ball, but too far to push. Move closer to the ball.
@@ -365,11 +374,11 @@ class Agent(Base_Agent):
             
         else:
             # STAGE 3: PUSH
-            # We ARE aligned AND close enough. Push the ball forward.
+            # We ARE aligned AND close enough (<= 0.4m). Push the ball forward.
             push_target = strategyData.point_in_direction(my_pos, GOAL_POS, 4)
             goal_dir = strategyData.GetDirectionRelativeToMyPositionAndTarget(push_target)
-            # Move fast, don't avoid obstacles (since opponents are frozen)
             return self.move(push_target, orientation=goal_dir, avoid_obstacles=False, timeout=999999)
+        # --- END FIX #1 ---
 
 
 
@@ -394,20 +403,13 @@ class Agent(Base_Agent):
         
         default_pos = np.array([-100.0, -100.0]) 
         
-        # The world is relative, so their Player 5's spot is ALWAYS at x=-12.
         OPPONENT_5_SPOT = np.array([-12.0, 0.0])
         
         
         # --- NEW DYNAMIC ROLE FOR PLAYER 3 ---
-        # We check if Player 3 should be a Hunter or a Finisher
         if my_unum == 3:
-            # IF the ball is still in the center circle (play just started)
             if strategyData.ball_2d[0] < 1.0:
-                # THEN act as a Hunter
                 HUNTER_UNUMS.append(3)
-            # ELSE (ball is upfield), he is a Finisher
-            # and will "fall through" this logic to the attacker section.
-        
         # --- END OF DYNAMIC ROLE ---
 
 
@@ -420,7 +422,7 @@ class Agent(Base_Agent):
                 drawer.annotation(tuple(target_opp_pos), f"HUNTING OPP 5" , drawer.Color.red, "exploit")
             else:
                 strategyData.my_desired_position = OPPONENT_5_SPOT
-                drawer.annotation(tuple(OPPONENT_5_SPOT), f"HNTING OPP 5 (SPOT)" , drawer.Color.orange, "exploit")
+                drawer.annotation(tuple(OPPONENT_5_SPOT), f"HUNTING OPP 5 (SPOT)" , drawer.Color.orange, "exploit")
 
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, timeout=999999)
@@ -481,10 +483,22 @@ class Agent(Base_Agent):
                     strategyData.my_desired_position = strategyData.ball_2d
                     strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.ball_2d)  
         else:
-            if strategyData.player_unum in point_preferences:
+            # --- FIX #3: "PLAYER 3 PUSH UP" LOGIC ---
+            is_finisher = (my_unum == 3 and strategyData.ball_2d[0] > 1.0)
+            
+            if is_finisher:
+                # Override formation. Go to a "finisher spot"
+                # (1.5m behind the ball, on the far post y=1.5)
+                finisher_spot = (strategyData.ball_2d[0] - 1.5, 1.5)
+                strategyData.my_desired_position = finisher_spot
+            elif strategyData.player_unum in point_preferences:
+                # Use normal formation spot
                 strategyData.my_desired_position = point_preferences[strategyData.player_unum]
             else:
+                # Fallback
                 strategyData.my_desired_position = self.init_pos
+            # --- END FIX #3 ---
+            
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.ball_2d)
 
         drawer.line(strategyData.mypos, strategyData.my_desired_position, 2,drawer.Color.blue,"target line")
@@ -506,13 +520,18 @@ class Agent(Base_Agent):
             return self.customDribbleAndShoot(strategyData)
         else:
             if strategyData.player_unum in point_preferences:
-                strategyData.my_desired_position = point_preferences[strategyData.player_unum]
+                # --- FIX #3: "PLAYER 3 PUSH UP" LOGIC (Repeated for this block) ---
+                is_finisher = (my_unum == 3 and strategyData.ball_2d[0] > 1.0)
+                
+                if is_finisher:
+                    finisher_spot = (strategyData.ball_2d[0] - 1.5, 1.5)
+                    strategyData.my_desired_position = finisher_spot
+                else:
+                    strategyData.my_desired_position = point_preferences[strategyData.player_unum]
+                # --- END FIX #3 ---
             else:
                 strategyData.my_desired_position = self.init_pos
             return self.move(strategyData.my_desired_position, orientation=strategyData.ball_dir)
-
-
-        # --- END OF CHANGE ---
 
 
         
