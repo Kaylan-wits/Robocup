@@ -262,123 +262,27 @@ class Agent(Base_Agent):
             self.fat_proxy_cmd = ""
 
 
-
+    # --- MODIFICATION START ---
+    # Replaced the complex dribble/pass/alignment logic with a simple
+    # call to kickTarget.
     def customDribbleAndShoot(self, strategyData):
         '''
-        A custom, simple dribble that does not use the RL Dribble behavior.
-        It uses self.move to align with the ball and push it towards the goal.
-        1. Checks for a pass (if this player is the "Passer").
-        2. Checks for a shot.
-        3. Aligns behind the ball (with the "stuck" bug fixed).
-        4. Moves through the ball to "push" it.
+        This function has been modified to ALWAYS kick towards the goal,
+        replacing the previous dribbling and passing logic.
         '''
+        
         # --- PARAMETERS ---
         GOAL_POS = (15.5, -0.3)      # Your Opponent goal target
-        X_POSITION_TO_SHOOT = 11.0  # How close to goal before shooting
-        
-        # --- FIX #3: SHOOTING CHANNEL (Your new value) ---
-        Y_SHOOTING_CHANNEL = 2.0    # Must be within y=2.0 and y=-2.0 to shoot
-        
-        # --- PASS LOGIC PARAMETERS ---
-        PASSER_UNUM = 5             # Player 5 is now the Passer
-        FINISHER_UNUM = 3           # Player 3 is now the Finisher
-        ATTACK_ZONE_X = 10.0        # X-line to be considered "in the zone"
-        KEEPER_SPOT_TOLERANCE = 1.5 # How far keeper must move from their spot to be "awake"
-        MIN_PASS_SEPARATION = 2.5   # Player 3 must be at least 2.5m away (laterally)
-
-        # --- FIX #2: GOALKEEPER THREAT ZONE (Your new logic) ---
-        KEEPER_THREAT_ZONE_RADIUS = 2.0  # 2-unit radius around the keeper's default spot
         
         # --- Get current data ---
         my_pos = strategyData.mypos
-        my_unum = strategyData.robot_model.unum
-        ball_pos = strategyData.ball_2d
-        ball_dist = strategyData.ball_dist
-        
-        
-        # --- START OF NEW PASS LOGIC (Only runs for the "Passer" - Player 5) ---
-        if my_unum == PASSER_UNUM:
-            # Find the finisher (Player 3) and the keeper (Player 1 / index 0)
-            finisher_pos = strategyData.teammate_positions[FINISHER_UNUM - 1]
-            opp_keeper_pos = strategyData.opponent_positions[0]
-            
-            # Find the keeper's "stuck" spot
-            OPPONENT_KEEPER_SPOT = np.array([14.0, 0.0]) # Their goal line
-                
-            # --- FIX #2: REVISED KEEPER LOGIC (Your logic) ---
-            # 1. Check if keeper is frozen in their spot
-            is_keeper_frozen = np.linalg.norm(opp_keeper_pos - OPPONENT_KEEPER_SPOT) <= KEEPER_SPOT_TOLERANCE
-            
-            # 2. Check if keeper is AWAKE but still INSIDE their "threat zone"
-            keeper_dist_from_spot = np.linalg.norm(opp_keeper_pos - OPPONENT_KEEPER_SPOT)
-            is_keeper_a_threat = (not is_keeper_frozen) and (keeper_dist_from_spot < KEEPER_THREAT_ZONE_RADIUS)
-            # --- END FIX #2 ---
 
-            # Check if both strikers are in the attack zone
-            am_i_in_zone = my_pos[0] > ATTACK_ZONE_X
-            is_finisher_in_zone = finisher_pos[0] > ATTACK_ZONE_X
-
-            # "GOOD POSITION" CHECK
-            is_laterally_separated = abs(finisher_pos[1] - my_pos[1]) > MIN_PASS_SEPARATION
-            is_on_far_post = (finisher_pos[1] * my_pos[1]) < 0
-            is_finisher_in_good_pos = is_finisher_in_zone and is_laterally_separated and is_on_far_post
-
-            # NEW PASS CONDITION:
-            # Pass ONLY IF:
-            #   1. The keeper IS a threat (awake AND in their zone)
-            #   2. AND I have the ball
-            #   3. AND my teammate is in a good spot
-            if is_keeper_a_threat and (ball_dist < 0.5) and am_i_in_zone and is_finisher_in_good_pos:
-                # ...PASS to the other striker (The Finisher)
-                return self.kickTarget(strategyData, my_pos, finisher_pos)
-        
-        # --- END OF NEW PASS LOGIC ---
-        # If any pass condition fails, Player 5 will "thug it out"
-        # and fall through to the dribble/shoot logic below.
-        
-
-        # --- FIX #3: "SHOOTING CHANNEL" LOGIC (Your new value) ---
-        is_in_shoot_x_zone = my_pos[0] > X_POSITION_TO_SHOOT
-        is_in_shoot_y_channel = abs(my_pos[1]) < Y_SHOOTING_CHANNEL
-
-        # 1. CHECK TO SHOOT
-        # Shoot if in X zone AND in Y channel AND have the ball
-        if is_in_shoot_x_zone and is_in_shoot_y_channel and ball_dist < 0.5:
-            return self.kickTarget(strategyData, my_pos, GOAL_POS)
-        # --- END FIX #3 ---
-
-
-        # --- FIX #1: "U-TURN" / "SCRAPPY DRIBBLE" FIX ---
-        
-        # --- START OF CHANGE ---
-        # Tighter tolerance forces better alignment before PUSH stage
-        is_aligned = strategyData.are_points_collinear(my_pos, ball_pos, GOAL_POS, tolerance=0.35)
-        # --- END OF CHANGE ---
-
-        is_in_front_of_ball = is_aligned and my_pos[0] > ball_pos[0] and my_pos[0] < GOAL_POS[0]
-
-        # Using ball_dist > 0.4 for a "sticky" PUSH state
-        if (not is_aligned) or (is_in_front_of_ball and ball_dist > 0.4):
-            # STAGE 1: ALIGN
-            # Using startat = -0.4 to give space for U-Turns
-            startat = strategyData.point_in_direction(ball_pos, GOAL_POS, -0.4)
-            # Move to this alignment spot, facing the ball
-            return self.move(startat, orientation=strategyData.ball_dir, avoid_obstacles=True, timeout=999999)
-        
-        # Using ball_dist > 0.4
-        elif ball_dist > 0.4:
-            # STAGE 2: APPROACH
-            # We ARE aligned AND behind the ball, but too far to push. Move closer to the ball.
-            goal_dir = strategyData.GetDirectionRelativeToMyPositionAndTarget(GOAL_POS)
-            return self.move(ball_pos, orientation=goal_dir, avoid_obstacles=True, timeout=999999)
-            
-        else:
-            # STAGE 3: PUSH
-            # We ARE aligned AND close enough (<= 0.4m). Push the ball forward.
-            push_target = strategyData.point_in_direction(my_pos, GOAL_POS, 4)
-            goal_dir = strategyData.GetDirectionRelativeToMyPositionAndTarget(push_target)
-            return self.move(push_target, orientation=goal_dir, avoid_obstacles=False, timeout=999999)
-        # --- END FIX #1 ---
+        # --- NEW LOGIC ---
+        # Immediately execute a kick towards the target goal.
+        # The Basic_Kick behavior (called by kickTarget) will automatically
+        # handle aligning with the ball and then executing the kick.
+        return self.kickTarget(strategyData, my_pos, GOAL_POS)
+    # --- MODIFICATION END ---
 
 
     def select_skill(self,strategyData):
