@@ -38,7 +38,7 @@ class Agent(Base_Agent):
             [-9, -3],   # 2: Left Defender
             [-2.1, 1.],  # 3: STRIKER 1 (Kicker) - Legal spot
             [-9, 3],    # 4: Right Defender
-            [-2.2, 0]  # 5: STRIKER 2 (Receiver/Charger) - Legal spot
+            [-2.2, 0]   # 5: STRIKER 2 (Receiver/Charger) - Legal spot
         ]
         self.init_pos = init_positions_5[unum-1] # initial formation
         
@@ -209,6 +209,7 @@ class Agent(Base_Agent):
         elif self.state == 1 or (behavior.is_ready("Get_Up") and self.fat_proxy_cmd is None):
             self.state = 0 if behavior.execute("Get_Up") else 1
 
+        # --- THIS IS YOUR KICKOFF LOGIC ---
         elif (strategyData.play_mode == self.world.M_OUR_KICKOFF):
             # This logic is correct and stays
             KICKER_UNUM = 3
@@ -222,8 +223,8 @@ class Agent(Base_Agent):
                 self.move(target_2d=RECEIVER_START_POS, orientation=strategyData.ball_dir)
             else:
                 self.move(self.init_pos, orientation=strategyData.ball_dir)
+        # --- END OF KICKOFF LOGIC ---
 
-        # --- THIS IS THE NEW LOGIC YOU ARE MISSING ---
         # If it's their set piece, run our main attack logic to intercept
         elif (strategyData.play_mode == self.world.M_THEIR_GOAL_KICK or
               strategyData.play_mode == self.world.M_THEIR_FREE_KICK or
@@ -262,32 +263,18 @@ class Agent(Base_Agent):
             self.fat_proxy_cmd = ""
 
 
-
+    # --- THIS IS YOUR CUSTOM DRIBBLE FUNCTION ---
+    # --- WITH THE TOLERANCE=0.45 FIX APPLIED ---
     def customDribbleAndShoot(self, strategyData):
         '''
-        A custom, simple dribble that does not use the RL Dribble behavior.
-        It uses self.move to align with the ball and push it towards the goal.
-        1. Checks for a pass (if this player is the "Passer").
-        2. Checks for a shot.
-        3. Aligns behind the ball (with the "stuck" bug fixed).
-        4. Moves through the ball to "push" it.
+        This is the NEW, SIMPLIFIED dribbler for the 4-player jail strategy.
+        It removes all pass/keeper logic and is just a pure, 3-stage
+        (Align, Approach, Push) dribbler with all our fixes.
         '''
         # --- PARAMETERS ---
         GOAL_POS = (15.5, -0.3)      # Your Opponent goal target
         X_POSITION_TO_SHOOT = 11.0  # How close to goal before shooting
-        
-        # --- FIX #3: SHOOTING CHANNEL (Your new value) ---
         Y_SHOOTING_CHANNEL = 2.0    # Must be within y=2.0 and y=-2.0 to shoot
-        
-        # --- PASS LOGIC PARAMETERS ---
-        PASSER_UNUM = 5             # Player 5 is now the Passer
-        FINISHER_UNUM = 3           # Player 3 is now the Finisher
-        ATTACK_ZONE_X = 10.0        # X-line to be considered "in the zone"
-        KEEPER_SPOT_TOLERANCE = 1.5 # How far keeper must move from their spot to be "awake"
-        MIN_PASS_SEPARATION = 2.5   # Player 3 must be at least 2.5m away (laterally)
-
-        # --- FIX #2: GOALKEEPER THREAT ZONE (Your new logic) ---
-        KEEPER_THREAT_ZONE_RADIUS = 2.0  # 2-unit radius around the keeper's default spot
         
         # --- Get current data ---
         my_pos = strategyData.mypos
@@ -295,94 +282,51 @@ class Agent(Base_Agent):
         ball_pos = strategyData.ball_2d
         ball_dist = strategyData.ball_dist
         
-        
-        # --- START OF NEW PASS LOGIC (Only runs for the "Passer" - Player 5) ---
-        if my_unum == PASSER_UNUM:
-            # Find the finisher (Player 3) and the keeper (Player 1 / index 0)
-            finisher_pos = strategyData.teammate_positions[FINISHER_UNUM - 1]
-            opp_keeper_pos = strategyData.opponent_positions[0]
-            
-            # Find the keeper's "stuck" spot
-            OPPONENT_KEEPER_SPOT = np.array([14.0, 0.0]) # Their goal line
-                
-            # --- FIX #2: REVISED KEEPER LOGIC (Your logic) ---
-            # 1. Check if keeper is frozen in their spot
-            is_keeper_frozen = np.linalg.norm(opp_keeper_pos - OPPONENT_KEEPER_SPOT) <= KEEPER_SPOT_TOLERANCE
-            
-            # 2. Check if keeper is AWAKE but still INSIDE their "threat zone"
-            keeper_dist_from_spot = np.linalg.norm(opp_keeper_pos - OPPONENT_KEEPER_SPOT)
-            is_keeper_a_threat = (not is_keeper_frozen) and (keeper_dist_from_spot < KEEPER_THREAT_ZONE_RADIUS)
-            # --- END FIX #2 ---
+        # --- ALL PASS/KEEPER LOGIC HAS BEEN REMOVED ---
+        # --- We are the only attacker, so we just shoot. ---
 
-            # Check if both strikers are in the attack zone
-            am_i_in_zone = my_pos[0] > ATTACK_ZONE_X
-            is_finisher_in_zone = finisher_pos[0] > ATTACK_ZONE_X
-
-            # "GOOD POSITION" CHECK
-            is_laterally_separated = abs(finisher_pos[1] - my_pos[1]) > MIN_PASS_SEPARATION
-            is_on_far_post = (finisher_pos[1] * my_pos[1]) < 0
-            is_finisher_in_good_pos = is_finisher_in_zone and is_laterally_separated and is_on_far_post
-
-            # NEW PASS CONDITION:
-            # Pass ONLY IF:
-            #   1. The keeper IS a threat (awake AND in their zone)
-            #   2. AND I have the ball
-            #   3. AND my teammate is in a good spot
-            if is_keeper_a_threat and (ball_dist < 0.5) and am_i_in_zone and is_finisher_in_good_pos:
-                # ...PASS to the other striker (The Finisher)
-                return self.kickTarget(strategyData, my_pos, finisher_pos)
-        
-        # --- END OF NEW PASS LOGIC ---
-        # If any pass condition fails, Player 5 will "thug it out"
-        # and fall through to the dribble/shoot logic below.
-        
-
-        # --- FIX #3: "SHOOTING CHANNEL" LOGIC (Your new value) ---
+        # --- "SHOOTING CHANNEL" LOGIC ---
         is_in_shoot_x_zone = my_pos[0] > X_POSITION_TO_SHOOT
         is_in_shoot_y_channel = abs(my_pos[1]) < Y_SHOOTING_CHANNEL
 
         # 1. CHECK TO SHOOT
-        # Shoot if in X zone AND in Y channel AND have the ball
+        # This is the "good old" kick logic. It will be stable
+        # because the dribble logic below is now fixed.
         if is_in_shoot_x_zone and is_in_shoot_y_channel and ball_dist < 0.5:
             return self.kickTarget(strategyData, my_pos, GOAL_POS)
-        # --- END FIX #3 ---
+        # --- END SHOOTING LOGIC ---
 
-
-        # --- FIX #1: "U-TURN" / "SCRAPPY DRIBBLE" FIX ---
         
-        # --- START OF CHANGE ---
-        # Tighter tolerance forces better alignment before PUSH stage
-        is_aligned = strategyData.are_points_collinear(my_pos, ball_pos, GOAL_POS, tolerance=0.2)
-        # --- END OF CHANGE ---
+        # --- PURE "PUSH-DRIBBLE" LOGIC (with all fixes) ---
+        
+        # FIX 1: "Sticky Push" (from your old code)
+        is_aligned = strategyData.are_points_collinear(my_pos, ball_pos, GOAL_POS, tolerance=0.45)
 
         is_in_front_of_ball = is_aligned and my_pos[0] > ball_pos[0] and my_pos[0] < GOAL_POS[0]
 
-        # Using ball_dist > 0.4 for a "sticky" PUSH state
+        # Check if we need to align
         if (not is_aligned) or (is_in_front_of_ball and ball_dist > 0.4):
             # STAGE 1: ALIGN
-            # Using startat = -0.4 to give space for U-Turns
+            # FIX 2: "U-Turn" Fix (from your new code)
             startat = strategyData.point_in_direction(ball_pos, GOAL_POS, -0.4)
-            # Move to this alignment spot, facing the ball
             return self.move(startat, orientation=strategyData.ball_dir, avoid_obstacles=True, timeout=999999)
         
-        # Using ball_dist > 0.4
+        # Check if we need to approach
         elif ball_dist > 0.4:
             # STAGE 2: APPROACH
-            # We ARE aligned AND behind the ball, but too far to push. Move closer to the ball.
             goal_dir = strategyData.GetDirectionRelativeToMyPositionAndTarget(GOAL_POS)
             return self.move(ball_pos, orientation=goal_dir, avoid_obstacles=True, timeout=999999)
             
+        # We are aligned and close
         else:
             # STAGE 3: PUSH
-            # We ARE aligned AND close enough (<= 0.4m). Push the ball forward.
             push_target = strategyData.point_in_direction(my_pos, GOAL_POS, 4)
             goal_dir = strategyData.GetDirectionRelativeToMyPositionAndTarget(push_target)
             return self.move(push_target, orientation=goal_dir, avoid_obstacles=False, timeout=999999)
-        # --- END FIX #1 ---
+        # --- END PURE "PUSH-DRIBBLE" LOGIC ---
 
 
-
-
+    # --- THIS IS YOUR FRIEND'S "JAIL" STRATEGY ---
     def select_skill(self,strategyData):
         #--------------------------------------- 2. Decide action
 
@@ -395,26 +339,35 @@ class Agent(Base_Agent):
         # --- START OF 2v1 STALL EXPLOIT LOGIC ---
         
         # 1. Define our roles
-        HUNTER_UNUMS = [1]                # Player 1 is a full-time Hunter
-        SPOT_BLOCKER_UNUMS = [2, 4]       # Player 2 & 4 will block Opp 5's spot
-        TARGET_OPPONENT_INDEX = 4         # Target opponent player 5 (index 4)
+        # --- MODIFICATION: Player 1 is now a blocker ---
+        HUNTER_UNUMS = []           # No full-time hunters
+        RIGHT_BLOCKER_UNUM = 1      # Player 1 blocks the right side
+        # --- END MODIFICATION ---
+
+        # "Sandwich" roles for Player 2 and 4
+        BACK_BLOCKER_UNUM = 2       # Player 2 will stand "behind" the spot
+        FRONT_BLOCKER_UNUM = 4      # Player 4 will stand "in front" of the spot
+        
+        # --- MODIFICATION: Player 3 is now a blocker ---
+        LEFT_BLOCKER_UNUM = 3       # Player 3 blocks the left side
+        # --- END MODIFICATION ---
+        
+        TARGET_OPPONENT_INDEX = 4       # Target opponent player 5 (index 4)
         
         my_unum = strategyData.robot_model.unum
         
         default_pos = np.array([-100.0, -100.0]) 
         
         OPPONENT_5_SPOT = np.array([-12.0, 0.0])
+        OUR_NET_POS = (-15.5, 0.0) # Our goal
         
         
-        # --- NEW DYNAMIC ROLE FOR PLAYER 3 ---
-        if my_unum == 3:
-            if strategyData.ball_2d[0] < 1.0:
-                HUNTER_UNUMS.append(3)
+        # --- MODIFICATION: Removed dynamic role for Player 3 ---
         # --- END OF DYNAMIC ROLE ---
 
 
         if my_unum in HUNTER_UNUMS:
-            # --- HUNTER LOGIC (for Player 1 and, conditionally, Player 3) ---
+            # --- HUNTER LOGIC (now empty, but kept for potential future use) ---
             target_opp_pos = strategyData.opponent_positions[TARGET_OPPONENT_INDEX]
 
             if not np.array_equal(target_opp_pos, default_pos):
@@ -427,26 +380,121 @@ class Agent(Base_Agent):
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, timeout=999999)
 
-        elif my_unum in SPOT_BLOCKER_UNUMS:
-            # --- SPOT BLOCKER LOGIC (for Players 2 AND 4) ---
-            strategyData.my_desired_position = OPPONENT_5_SPOT 
-            drawer.annotation(tuple(OPPONENT_5_SPOT), f"BLOCKING OPP 5 SPOT" , drawer.Color.cyan, "exploit")
+        # --- MODIFICATION: New block for Player 1 (Right Blocker) ---
+        elif my_unum == RIGHT_BLOCKER_UNUM:
+            # --- "RIGHT BLOCKER" LOGIC (Player 1) ---
+            # Stand 0.3m to the "right" of the spot (negative Y)
 
-            target_opp_pos = strategyData.opponent_positions[TARGET_OPPONENT_INDEX]
-            if not np.array_equal(target_opp_pos, default_pos):
-                if np.sum((target_opp_pos - OPPONENT_5_SPOT) ** 2) < 4.0:
-                    strategyData.my_desired_position = target_opp_pos
-                    drawer.annotation(tuple(target_opp_pos), f"PUSHING OPP 5" , drawer.Color.red, "exploit")
+            # --- ORIENTATION CHANGE: Face straight down (-Y) ---
+            desired_orientation_degs = 90.0
+            # --- END ORIENTATION CHANGE ---
             
-            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
-            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, timeout=999999)
+            # Target position is (spot.x, spot.y - 0.3)
+            player_1_target = OPPONENT_5_SPOT + np.array([0, -0.33]) # -0.3 is "right"
+            
+            strategyData.my_desired_position = player_1_target
+            drawer.annotation(tuple(player_1_target), f"RIGHT BLOCK (FACE -Y)" , drawer.Color.red, "exploit") # Changed color/text
+
+            # Call move with the specific orientation, standing still
+            return self.move(
+                strategyData.my_desired_position, 
+                orientation=desired_orientation_degs, 
+                is_orientation_absolute=True,
+                avoid_obstacles=True,
+                is_aggressive=False, # Strictly stand there
+                timeout=999999
+            )
+        # --- END MODIFICATION ---
+
+        # --- MODIFICATION: New block for Player 3 (Left Blocker) ---
+        elif my_unum == LEFT_BLOCKER_UNUM:
+            # --- "LEFT BLOCKER" LOGIC (Player 3) ---
+            # Stand 0.3m to the "left" of the spot (positive Y)
+
+            # --- ORIENTATION CHANGE: Face straight up (+Y) ---
+            desired_orientation_degs = -90.0
+            # --- END ORIENTATION CHANGE ---
+            
+            # Target position is (spot.x, spot.y + 0.3)
+            player_3_target = OPPONENT_5_SPOT + np.array([0, 0.33]) # +0.3 is "left"
+            
+            strategyData.my_desired_position = player_3_target
+            drawer.annotation(tuple(player_3_target), f"LEFT BLOCK (FACE +Y)" , drawer.Color.green, "exploit") # Added new color
+
+            # Call move with the specific orientation, standing still
+            return self.move(
+                strategyData.my_desired_position, 
+                orientation=desired_orientation_degs, 
+                is_orientation_absolute=True,
+                avoid_obstacles=True,
+                is_aggressive=False, # Strictly stand there
+                timeout=999999
+            )
+        # --- END MODIFICATION ---
+
+        # --- MODIFICATION: New block for Player 4 (Front Blocker) ---
+        elif my_unum == FRONT_BLOCKER_UNUM:
+            # --- "FRONT BLOCKER" LOGIC (Player 4) ---
+            # Stand 0.3m "in front" of the spot (closer to our net)
+            
+            # Calculate the absolute angle to face our net
+            desired_orientation_degs = M.target_abs_angle(OPPONENT_5_SPOT, OUR_NET_POS)
+            
+            # Use point_in_direction: A positive distance moves *towards* the goal
+            # This calculates a spot 0.3m towards our net from the spot
+            player_4_target = strategyData.point_in_direction(
+                position=OPPONENT_5_SPOT, 
+                goal=OUR_NET_POS, 
+                distance=0.33 # 0.3m "in front"
+            )
+            
+            strategyData.my_desired_position = player_4_target
+            drawer.annotation(tuple(player_4_target), f"FRONT BLOCK (FACE NET)" , drawer.Color.blue, "exploit")
+
+            # Call move with the specific orientation, standing still
+            return self.move(
+                strategyData.my_desired_position, 
+                orientation=desired_orientation_degs, 
+                is_orientation_absolute=True,
+                avoid_obstacles=True,
+                is_aggressive=False, # Strictly stand there
+                timeout=999999
+            )
+        # --- END MODIFICATION ---
+
+        # --- MODIFICATION: New block for Player 2 (Back Blocker) ---
+        elif my_unum == BACK_BLOCKER_UNUM:
+            # --- "BACK BLOCKER" LOGIC (Player 2) ---
+            # Stand 0.3m "behind" the spot (further from our net)
+
+            # Calculate the absolute angle to face our net
+            desired_orientation_degs = M.target_abs_angle(OPPONENT_5_SPOT, OUR_NET_POS)
+            
+            # Use point_in_direction: A negative distance moves *away* from the goal
+            # This calculates a spot 0.3m away from our net from the spot
+            player_2_target = strategyData.point_in_direction(
+                position=OPPONENT_5_SPOT, 
+                goal=OUR_NET_POS, 
+                distance=-0.33 # 0.3m "behind"
+            )
+            
+            strategyData.my_desired_position = player_2_target
+            drawer.annotation(tuple(player_2_target), f"BACK BLOCK (FACE NET)" , drawer.Color.cyan, "exploit")
+            
+            # Call move with the specific orientation, standing still
+            return self.move(
+                strategyData.my_desired_position, 
+                orientation=desired_orientation_degs, 
+                is_orientation_absolute=True,
+                avoid_obstacles=True,
+                is_aggressive=False, # Strictly stand there
+                timeout=999999
+            )
+        # --- END MODIFICATION ---
 
         # --- END OF "STALL" EXPLOIT LOGIC ---
-        # Player 5 (always) and Player 3 (conditionally)
-        # will now execute the attacker code below.
         
-
-        # --- ATTACKER LOGIC (for Player 5 and Player 3) ---
+        # --- ATTACKER LOGIC (Now ONLY for Player 5) ---
         
         #------------------------------------------------------
         #Role Assignment
@@ -454,7 +502,7 @@ class Agent(Base_Agent):
         if strategyData.active_player_unum == strategyData.robot_model.unum: 
             drawer.annotation((0,10.5), "Role Assignment Phase" , drawer.Color.yellow, "status")
         else:
-            drawer.clear("status")     
+            drawer.clear("status")    
 
 
         # --- NEW 5-PLAYER FORMATION LOGIC ---
@@ -483,27 +531,28 @@ class Agent(Base_Agent):
                     strategyData.my_desired_position = strategyData.ball_2d
                     strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.ball_2d)  
         else:
-            # --- FIX #3: "PLAYER 3 PUSH UP" LOGIC ---
-            is_finisher = (my_unum == 3 and strategyData.ball_2d[0] > 1.0)
+            # --- Player 3 is a blocker, so this logic is only for Player 5 ---
+            is_attacker = (my_unum == 5)
             
-            if is_finisher:
-                # Override formation. Go to a "finisher spot"
-                # (1.5m behind the ball, on the far post y=1.5)
-                finisher_spot = (strategyData.ball_2d[0] - 1.5, 1.5)
-                strategyData.my_desired_position = finisher_spot
+            if is_attacker:
+                if strategyData.player_unum in point_preferences:
+                    # Use normal formation spot
+                    strategyData.my_desired_position = point_preferences[strategyData.player_unum]
+                else:
+                    # Fallback
+                    strategyData.my_desired_position = self.init_pos
             elif strategyData.player_unum in point_preferences:
-                # Use normal formation spot
+                # This block will now only be entered by Player 5
                 strategyData.my_desired_position = point_preferences[strategyData.player_unum]
             else:
                 # Fallback
                 strategyData.my_desired_position = self.init_pos
-            # --- END FIX #3 ---
             
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.ball_2d)
 
         drawer.line(strategyData.mypos, strategyData.my_desired_position, 2,drawer.Color.blue,"target line")
 
-        if not strategyData.IsFormationReady(point_preferences):     
+        if not strategyData.IsFormationReady(point_preferences):    
             if strategyData.active_player_unum == strategyData.robot_model.unum:  # I am the active player
                 return self.customDribbleAndShoot(strategyData)
             else:
@@ -520,15 +569,13 @@ class Agent(Base_Agent):
             return self.customDribbleAndShoot(strategyData)
         else:
             if strategyData.player_unum in point_preferences:
-                # --- FIX #3: "PLAYER 3 PUSH UP" LOGIC (Repeated for this block) ---
-                is_finisher = (my_unum == 3 and strategyData.ball_2d[0] > 1.0)
+                # --- Player 3 is a blocker, so this logic is only for Player 5 ---
+                is_attacker = (my_unum == 5)
                 
-                if is_finisher:
-                    finisher_spot = (strategyData.ball_2d[0] - 1.5, 1.5)
-                    strategyData.my_desired_position = finisher_spot
+                if is_attacker:
+                    strategyData.my_desired_position = point_preferences[strategyData.player_unum]
                 else:
                     strategyData.my_desired_position = point_preferences[strategyData.player_unum]
-                # --- END FIX #3 ---
             else:
                 strategyData.my_desired_position = self.init_pos
             return self.move(strategyData.my_desired_position, orientation=strategyData.ball_dir)
