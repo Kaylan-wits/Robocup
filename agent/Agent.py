@@ -323,6 +323,7 @@ class Agent(Base_Agent):
 
 
     # --- THIS IS YOUR FRIEND'S "JAIL" STRATEGY ---
+# --- THIS IS YOUR FRIEND'S "JAIL" STRATEGY ---
     def select_skill(self,strategyData):
         #--------------------------------------- 2. Decide action
 
@@ -331,6 +332,11 @@ class Agent(Base_Agent):
         path_draw_options = self.path_manager.draw_options
 
         target = (15,0) # Opponents Goal
+        
+        # --- NEW ---
+        SPIN_INCREMENT_DEGS = 15.0  # Degrees to turn each frame for spinning
+        DISTANCE_TOLERANCE = 0.15   # How close to get before spinning (in meters)
+        # --- END NEW ---
         
         # --- START OF 2v1 STALL EXPLOIT LOGIC ---
         
@@ -380,16 +386,24 @@ class Agent(Base_Agent):
         elif my_unum == RIGHT_BLOCKER_UNUM:
             # --- "RIGHT BLOCKER" LOGIC (Player 1) ---
             # Stand 0.3m to the "right" of the spot (negative Y)
-
-            # --- ORIENTATION CHANGE: Face straight down (-Y) ---
-            desired_orientation_degs = 90.0
-            # --- END ORIENTATION CHANGE ---
             
             # Target position is (spot.x, spot.y - 0.3)
-            player_1_target = OPPONENT_5_SPOT + np.array([0, -0.33]) # -0.3 is "right"
+            player_1_target = OPPONENT_5_SPOT + np.array([0, -0.265]) # -0.3 is "right"
+            
+            # --- MODIFIED: Check distance before spinning ---
+            distance_to_target = np.linalg.norm(np.array(strategyData.mypos) - player_1_target)
+            
+            if distance_to_target < DISTANCE_TOLERANCE:
+                # We are at the spot, so spin
+                desired_orientation_degs = M.normalize_deg(strategyData.my_ori + SPIN_INCREMENT_DEGS)
+                drawer.annotation(tuple(player_1_target), f"RIGHT BLOCK (SPIN)" , drawer.Color.red, "exploit")
+            else:
+                # We are moving, so face the spot
+                desired_orientation_degs = strategyData.GetDirectionRelativeToMyPositionAndTarget(OPPONENT_5_SPOT)
+                drawer.annotation(tuple(player_1_target), f"RIGHT BLOCK (MOVING)" , drawer.Color.red, "exploit")
+            # --- END MODIFICATION ---
             
             strategyData.my_desired_position = player_1_target
-            drawer.annotation(tuple(player_1_target), f"RIGHT BLOCK (FACE -Y)" , drawer.Color.red, "exploit") # Changed color/text
 
             # Call move with the specific orientation, standing still
             return self.move(
@@ -403,29 +417,27 @@ class Agent(Base_Agent):
         # --- END MODIFICATION ---
 
         # --- MODIFICATION: New block for Player 3 (Left Blocker) ---
-        # --- MODIFICATION: New 2-STAGE block for Player 3 (Left Blocker) ---
         elif my_unum == LEFT_BLOCKER_UNUM:
             # --- "LEFT BLOCKER" LOGIC (Player 3) ---
-            desired_orientation_degs = -90.0 # Face +Y
-            player_3_target = OPPONENT_5_SPOT + np.array([0, 0.33]) # +0.3 is "left"
+            # Stand 0.3m to the "left" of the spot (positive Y)
             
-            # Check distance to the target spot
-            dist_to_target = np.linalg.norm(strategyData.mypos - player_3_target)
+            # Target position is (spot.x, spot.y + 0.3)
+            player_3_target = OPPONENT_5_SPOT + np.array([0, 0.265]) # +0.3 is "left"
 
-            # STAGE 1: MOVE (if we are far from the spot)
-            # We run straight at the target first, this is faster.
-            if dist_to_target > 0.15: # 15cm tolerance
-                # Move to the spot, but face the spot itself
-                orientation_to_target = strategyData.GetDirectionRelativeToMyPositionAndTarget(player_3_target)
-                drawer.annotation(tuple(player_3_target), f"MOVING: LEFT BLOCK" , drawer.Color.green, "exploit")
-                return self.move(player_3_target, orientation=orientation_to_target, is_orientation_absolute=True, timeout=999999)
-            
-            # STAGE 2: TURN (we are at the spot, now turn)
-            # We are close enough, so now we stop and face the correct direction.
+            # --- MODIFIED: Check distance before spinning ---
+            distance_to_target = np.linalg.norm(np.array(strategyData.mypos) - player_3_target)
+
+            if distance_to_target < DISTANCE_TOLERANCE:
+                # We are at the spot, so spin
+                desired_orientation_degs = M.normalize_deg(strategyData.my_ori + SPIN_INCREMENT_DEGS)
+                drawer.annotation(tuple(player_3_target), f"LEFT BLOCK (SPIN)" , drawer.Color.green, "exploit")
             else:
-                drawer.annotation(tuple(player_3_target), f"BLOCKING (FACE +Y)" , drawer.Color.green, "exploit")
-                return self.move(player_3_target, orientation=desired_orientation_degs, is_orientation_absolute=True, timeout=999999)
-        # --- END MODIFICATION ---
+                # We are moving, so face the spot
+                desired_orientation_degs = strategyData.GetDirectionRelativeToMyPositionAndTarget(OPPONENT_5_SPOT)
+                drawer.annotation(tuple(player_3_target), f"LEFT BLOCK (MOVING)" , drawer.Color.green, "exploit")
+            # --- END MODIFICATION ---
+            
+            strategyData.my_desired_position = player_3_target
 
             # Call move with the specific orientation, standing still
             return self.move(
@@ -443,19 +455,28 @@ class Agent(Base_Agent):
             # --- "FRONT BLOCKER" LOGIC (Player 4) ---
             # Stand 0.3m "in front" of the spot (closer to our net)
             
-            # Calculate the absolute angle to face our net
-            desired_orientation_degs = M.target_abs_angle(OPPONENT_5_SPOT, OUR_NET_POS)
-            
             # Use point_in_direction: A positive distance moves *towards* the goal
             # This calculates a spot 0.3m towards our net from the spot
             player_4_target = strategyData.point_in_direction(
                 position=OPPONENT_5_SPOT, 
                 goal=OUR_NET_POS, 
-                distance=0.33 # 0.3m "in front"
+                distance=0.265 # 0.3m "in front"
             )
+
+            # --- MODIFIED: Check distance before spinning ---
+            distance_to_target = np.linalg.norm(np.array(strategyData.mypos) - player_4_target)
+
+            if distance_to_target < DISTANCE_TOLERANCE:
+                # We are at the spot, so spin
+                desired_orientation_degs = M.normalize_deg(strategyData.my_ori + SPIN_INCREMENT_DEGS)
+                drawer.annotation(tuple(player_4_target), f"FRONT BLOCK (SPIN)" , drawer.Color.blue, "exploit")
+            else:
+                # We are moving, so face our net
+                desired_orientation_degs = M.target_abs_angle(strategyData.mypos, OUR_NET_POS)
+                drawer.annotation(tuple(player_4_target), f"FRONT BLOCK (MOVING)" , drawer.Color.blue, "exploit")
+            # --- END MODIFICATION ---
             
             strategyData.my_desired_position = player_4_target
-            drawer.annotation(tuple(player_4_target), f"FRONT BLOCK (FACE NET)" , drawer.Color.blue, "exploit")
 
             # Call move with the specific orientation, standing still
             return self.move(
@@ -472,20 +493,29 @@ class Agent(Base_Agent):
         elif my_unum == BACK_BLOCKER_UNUM:
             # --- "BACK BLOCKER" LOGIC (Player 2) ---
             # Stand 0.3m "behind" the spot (further from our net)
-
-            # Calculate the absolute angle to face our net
-            desired_orientation_degs = M.target_abs_angle(OPPONENT_5_SPOT, OUR_NET_POS)
             
             # Use point_in_direction: A negative distance moves *away* from the goal
             # This calculates a spot 0.3m away from our net from the spot
             player_2_target = strategyData.point_in_direction(
                 position=OPPONENT_5_SPOT, 
                 goal=OUR_NET_POS, 
-                distance=-0.33 # 0.3m "behind"
+                distance=-0.265 # 0.3m "behind"
             )
             
+            # --- MODIFIED: Check distance before spinning ---
+            distance_to_target = np.linalg.norm(np.array(strategyData.mypos) - player_2_target)
+            
+            if distance_to_target < DISTANCE_TOLERANCE:
+                # We are at the spot, so spin
+                desired_orientation_degs = M.normalize_deg(strategyData.my_ori + SPIN_INCREMENT_DEGS)
+                drawer.annotation(tuple(player_2_target), f"BACK BLOCK (SPIN)" , drawer.Color.cyan, "exploit")
+            else:
+                # We are moving, so face our net
+                desired_orientation_degs = M.target_abs_angle(strategyData.mypos, OUR_NET_POS)
+                drawer.annotation(tuple(player_2_target), f"BACK BLOCK (MOVING)" , drawer.Color.cyan, "exploit")
+            # --- END MODIFICATION ---
+            
             strategyData.my_desired_position = player_2_target
-            drawer.annotation(tuple(player_2_target), f"BACK BLOCK (FACE NET)" , drawer.Color.cyan, "exploit")
             
             # Call move with the specific orientation, standing still
             return self.move(
