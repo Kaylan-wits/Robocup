@@ -147,8 +147,7 @@ class Agent(Base_Agent):
         return self.behavior.execute("Dribble", orientation, is_orientation_absolute, speed, stop)
 
             
-    # --- START OF MERGED FUNCTION ---
-    # This is Amaan's dribble logic, renamed to be clear
+    # --- THIS IS THE FUNCTION WE ARE NOW USING ---
     def dribbleToTarget(self, strategyData, MyNum=0, position=(0,0), ball_pos=(0.0, 0.0), aim=(15.5,0)):
         goal = aim
         # if strategyData.min_opponent_ball_dist > 1:
@@ -186,7 +185,7 @@ class Agent(Base_Agent):
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
             # --- MODIFIED: Added timeout=999999 to "remove" timeout ---
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, avoid_obstacles=False, timeout=999999)
-    # --- END OF MERGED FUNCTION ---
+    # --- END OF FUNCTION ---
 
     def think_and_send(self):
         
@@ -263,67 +262,64 @@ class Agent(Base_Agent):
             self.fat_proxy_cmd = ""
 
 
-    # --- THIS IS YOUR CUSTOM DRIBBLE FUNCTION ---
-    # --- WITH THE TOLERANCE=0.45 FIX APPLIED ---
+    # --- customDribbleAndShoot HAS BEEN REMOVED ---
+
     def customDribbleAndShoot(self, strategyData):
         '''
-        This is the NEW, SIMPLIFIED dribbler for the 4-player jail strategy.
-        It removes all pass/keeper logic and is just a pure, 3-stage
-        (Align, Approach, Push) dribbler with all our fixes.
+        This is the "good old" dribble function (tolerance=0.45)
+        simplified to remove all unnecessary pass/keeper logic.
         '''
         # --- PARAMETERS ---
-        GOAL_POS = (15.5, -0.3)      # Your Opponent goal target
-        X_POSITION_TO_SHOOT = 11.0  # How close to goal before shooting
-        Y_SHOOTING_CHANNEL = 2.0    # Must be within y=2.0 and y=-2.0 to shoot
-        
+        GOAL_POS = (15.5, -0.3)      # Opponent goal
+        X_POSITION_TO_SHOOT = 11.0  # How close to goal before shooting (for both players)
+
         # --- Get current data ---
         my_pos = strategyData.mypos
         my_unum = strategyData.robot_model.unum
         ball_pos = strategyData.ball_2d
         ball_dist = strategyData.ball_dist
-        
-        # --- ALL PASS/KEEPER LOGIC HAS BEEN REMOVED ---
-        # --- We are the only attacker, so we just shoot. ---
 
-        # --- "SHOOTING CHANNEL" LOGIC ---
-        is_in_shoot_x_zone = my_pos[0] > X_POSITION_TO_SHOOT
-        is_in_shoot_y_channel = abs(my_pos[1]) < Y_SHOOTING_CHANNEL
+        # --- ALL PASS/KEEPER LOGIC HAS BEEN REMOVED ---
 
         # 1. CHECK TO SHOOT
-        # This is the "good old" kick logic. It will be stable
-        # because the dribble logic below is now fixed.
-        if is_in_shoot_x_zone and is_in_shoot_y_channel and ball_dist < 0.5:
+        # If we are in the shooting zone AND have the ball, shoot.
+        if my_pos[0] > X_POSITION_TO_SHOOT and ball_dist < 0.5:
             return self.kickTarget(strategyData, my_pos, GOAL_POS)
-        # --- END SHOOTING LOGIC ---
 
-        
-        # --- PURE "PUSH-DRIBBLE" LOGIC (with all fixes) ---
-        
-        # FIX 1: "Sticky Push" (from your old code)
+        # --- START OF DRIBBLE "STUCK" FIX ---
+
+        # 2. CHECK ALIGNMENT
+        # Check if the player, the ball, and the goal are in a straight line.
         is_aligned = strategyData.are_points_collinear(my_pos, ball_pos, GOAL_POS, tolerance=0.45)
 
+        # Check if we are aligned BUT IN FRONT of the ball (i.e., ball is behind us)
         is_in_front_of_ball = is_aligned and my_pos[0] > ball_pos[0] and my_pos[0] < GOAL_POS[0]
 
-        # Check if we need to align
+        # We must align IF:
+        #   a) We are not aligned at all
+        #   b) We ARE aligned, but we are in front of the ball (and not right on top of it)
         if (not is_aligned) or (is_in_front_of_ball and ball_dist > 0.4):
             # STAGE 1: ALIGN
-            # FIX 2: "U-Turn" Fix (from your new code)
-            startat = strategyData.point_in_direction(ball_pos, GOAL_POS, -0.4)
+            # 'startat' is a point 0.2m behind the ball, on the line to the goal.
+            startat = strategyData.point_in_direction(ball_pos, GOAL_POS, -0.2)
+            # Move to this alignment spot, facing the ball
             return self.move(startat, orientation=strategyData.ball_dir, avoid_obstacles=True, timeout=999999)
-        
-        # Check if we need to approach
+
+        # --- END OF DRIBBLE "STUCK" FIX ---
+
         elif ball_dist > 0.4:
             # STAGE 2: APPROACH
+            # We ARE aligned AND behind the ball, but too far to push. Move closer to the ball.
             goal_dir = strategyData.GetDirectionRelativeToMyPositionAndTarget(GOAL_POS)
             return self.move(ball_pos, orientation=goal_dir, avoid_obstacles=True, timeout=999999)
-            
-        # We are aligned and close
+
         else:
             # STAGE 3: PUSH
+            # We ARE aligned AND close enough. Push the ball forward.
             push_target = strategyData.point_in_direction(my_pos, GOAL_POS, 4)
             goal_dir = strategyData.GetDirectionRelativeToMyPositionAndTarget(push_target)
+            # Move fast, don't avoid obstacles (since opponents are frozen)
             return self.move(push_target, orientation=goal_dir, avoid_obstacles=False, timeout=999999)
-        # --- END PURE "PUSH-DRIBBLE" LOGIC ---
 
 
     # --- THIS IS YOUR FRIEND'S "JAIL" STRATEGY ---
@@ -554,6 +550,7 @@ class Agent(Base_Agent):
 
         if not strategyData.IsFormationReady(point_preferences):    
             if strategyData.active_player_unum == strategyData.robot_model.unum:  # I am the active player
+                # --- MODIFIED: CALLING dribbleToTarget ---
                 return self.customDribbleAndShoot(strategyData)
             else:
                 return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation)
@@ -566,6 +563,7 @@ class Agent(Base_Agent):
             drawer.clear_player()
 
         if strategyData.active_player_unum == strategyData.robot_model.unum: # I am the active player 
+            # --- MODIFIED: CALLING dribbleToTarget ---
             return self.customDribbleAndShoot(strategyData)
         else:
             if strategyData.player_unum in point_preferences:
