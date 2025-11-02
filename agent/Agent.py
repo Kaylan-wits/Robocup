@@ -352,7 +352,7 @@ class Agent(Base_Agent):
         
         # --- START OF CHANGE ---
         # Tighter tolerance forces better alignment before PUSH stage
-        is_aligned = strategyData.are_points_collinear(my_pos, ball_pos, GOAL_POS, tolerance=0.2)
+        is_aligned = strategyData.are_points_collinear(my_pos, ball_pos, GOAL_POS, tolerance=0.45)
         # --- END OF CHANGE ---
 
         is_in_front_of_ball = is_aligned and my_pos[0] > ball_pos[0] and my_pos[0] < GOAL_POS[0]
