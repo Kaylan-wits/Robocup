@@ -352,7 +352,7 @@ class Agent(Base_Agent):
         
         # --- START OF CHANGE ---
         # Tighter tolerance forces better alignment before PUSH stage
-        is_aligned = strategyData.are_points_collinear(my_pos, ball_pos, GOAL_POS, tolerance=0.2)
+        is_aligned = strategyData.are_points_collinear(my_pos, ball_pos, GOAL_POS, tolerance=0.35)
         # --- END OF CHANGE ---
 
         is_in_front_of_ball = is_aligned and my_pos[0] > ball_pos[0] and my_pos[0] < GOAL_POS[0]
@@ -381,8 +381,6 @@ class Agent(Base_Agent):
         # --- END FIX #1 ---
 
 
-
-
     def select_skill(self,strategyData):
         #--------------------------------------- 2. Decide action
 
@@ -395,8 +393,19 @@ class Agent(Base_Agent):
         # --- START OF 2v1 STALL EXPLOIT LOGIC ---
         
         # 1. Define our roles
-        HUNTER_UNUMS = [1]                # Player 1 is a full-time Hunter
-        SPOT_BLOCKER_UNUMS = [2, 4]       # Player 2 & 4 will block Opp 5's spot
+        # --- MODIFICATION: Player 1 is now a blocker ---
+        HUNTER_UNUMS = []                 # No full-time hunters
+        RIGHT_BLOCKER_UNUM = 1            # Player 1 blocks the right side
+        # --- END MODIFICATION ---
+
+        # "Sandwich" roles for Player 2 and 4
+        BACK_BLOCKER_UNUM = 2             # Player 2 will stand "behind" the spot
+        FRONT_BLOCKER_UNUM = 4            # Player 4 will stand "in front" of the spot
+        
+        # --- MODIFICATION: Player 3 is now a blocker ---
+        LEFT_BLOCKER_UNUM = 3             # Player 3 blocks the left side
+        # --- END MODIFICATION ---
+        
         TARGET_OPPONENT_INDEX = 4         # Target opponent player 5 (index 4)
         
         my_unum = strategyData.robot_model.unum
@@ -404,17 +413,15 @@ class Agent(Base_Agent):
         default_pos = np.array([-100.0, -100.0]) 
         
         OPPONENT_5_SPOT = np.array([-12.0, 0.0])
+        OUR_NET_POS = (-15.5, 0.0) # Our goal
         
         
-        # --- NEW DYNAMIC ROLE FOR PLAYER 3 ---
-        if my_unum == 3:
-            if strategyData.ball_2d[0] < 1.0:
-                HUNTER_UNUMS.append(3)
+        # --- MODIFICATION: Removed dynamic role for Player 3 ---
         # --- END OF DYNAMIC ROLE ---
 
 
         if my_unum in HUNTER_UNUMS:
-            # --- HUNTER LOGIC (for Player 1 and, conditionally, Player 3) ---
+            # --- HUNTER LOGIC (now empty, but kept for potential future use) ---
             target_opp_pos = strategyData.opponent_positions[TARGET_OPPONENT_INDEX]
 
             if not np.array_equal(target_opp_pos, default_pos):
@@ -427,19 +434,117 @@ class Agent(Base_Agent):
             strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
             return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, timeout=999999)
 
-        elif my_unum in SPOT_BLOCKER_UNUMS:
-            # --- SPOT BLOCKER LOGIC (for Players 2 AND 4) ---
-            strategyData.my_desired_position = OPPONENT_5_SPOT 
-            drawer.annotation(tuple(OPPONENT_5_SPOT), f"BLOCKING OPP 5 SPOT" , drawer.Color.cyan, "exploit")
+        # --- MODIFICATION: New block for Player 1 (Right Blocker) ---
+        elif my_unum == RIGHT_BLOCKER_UNUM:
+            # --- "RIGHT BLOCKER" LOGIC (Player 1) ---
+            # Stand 0.3m to the "right" of the spot (negative Y)
 
-            target_opp_pos = strategyData.opponent_positions[TARGET_OPPONENT_INDEX]
-            if not np.array_equal(target_opp_pos, default_pos):
-                if np.sum((target_opp_pos - OPPONENT_5_SPOT) ** 2) < 4.0:
-                    strategyData.my_desired_position = target_opp_pos
-                    drawer.annotation(tuple(target_opp_pos), f"PUSHING OPP 5" , drawer.Color.red, "exploit")
+            # --- ORIENTATION CHANGE: Face straight down (-Y) ---
+            desired_orientation_degs = 90.0
+            # --- END ORIENTATION CHANGE ---
             
-            strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.my_desired_position)
-            return self.move(strategyData.my_desired_position, orientation=strategyData.my_desired_orientation, timeout=999999)
+            # Target position is (spot.x, spot.y - 0.3)
+            player_1_target = OPPONENT_5_SPOT + np.array([0, -0.33]) # -0.3 is "right"
+            
+            strategyData.my_desired_position = player_1_target
+            drawer.annotation(tuple(player_1_target), f"RIGHT BLOCK (FACE -Y)" , drawer.Color.red, "exploit") # Changed color/text
+
+            # Call move with the specific orientation, standing still
+            return self.move(
+                strategyData.my_desired_position, 
+                orientation=desired_orientation_degs, 
+                is_orientation_absolute=True,
+                avoid_obstacles=True,
+                is_aggressive=False, # Strictly stand there
+                timeout=999999
+            )
+        # --- END MODIFICATION ---
+
+        # --- MODIFICATION: New block for Player 3 (Left Blocker) ---
+        elif my_unum == LEFT_BLOCKER_UNUM:
+            # --- "LEFT BLOCKER" LOGIC (Player 3) ---
+            # Stand 0.3m to the "left" of the spot (positive Y)
+
+            # --- ORIENTATION CHANGE: Face straight up (+Y) ---
+            desired_orientation_degs = -90.0
+            # --- END ORIENTATION CHANGE ---
+            
+            # Target position is (spot.x, spot.y + 0.3)
+            player_3_target = OPPONENT_5_SPOT + np.array([0, 0.33]) # +0.3 is "left"
+            
+            strategyData.my_desired_position = player_3_target
+            drawer.annotation(tuple(player_3_target), f"LEFT BLOCK (FACE +Y)" , drawer.Color.green, "exploit") # Added new color
+
+            # Call move with the specific orientation, standing still
+            return self.move(
+                strategyData.my_desired_position, 
+                orientation=desired_orientation_degs, 
+                is_orientation_absolute=True,
+                avoid_obstacles=True,
+                is_aggressive=False, # Strictly stand there
+                timeout=999999
+            )
+        # --- END MODIFICATION ---
+
+        # --- MODIFICATION: New block for Player 4 (Front Blocker) ---
+        elif my_unum == FRONT_BLOCKER_UNUM:
+            # --- "FRONT BLOCKER" LOGIC (Player 4) ---
+            # Stand 0.3m "in front" of the spot (closer to our net)
+            
+            # Calculate the absolute angle to face our net
+            desired_orientation_degs = M.target_abs_angle(OPPONENT_5_SPOT, OUR_NET_POS)
+            
+            # Use point_in_direction: A positive distance moves *towards* the goal
+            # This calculates a spot 0.3m towards our net from the spot
+            player_4_target = strategyData.point_in_direction(
+                position=OPPONENT_5_SPOT, 
+                goal=OUR_NET_POS, 
+                distance=0.33 # 0.3m "in front"
+            )
+            
+            strategyData.my_desired_position = player_4_target
+            drawer.annotation(tuple(player_4_target), f"FRONT BLOCK (FACE NET)" , drawer.Color.blue, "exploit")
+
+            # Call move with the specific orientation, standing still
+            return self.move(
+                strategyData.my_desired_position, 
+                orientation=desired_orientation_degs, 
+                is_orientation_absolute=True,
+                avoid_obstacles=True,
+                is_aggressive=False, # Strictly stand there
+                timeout=999999
+            )
+        # --- END MODIFICATION ---
+
+        # --- MODIFICATION: New block for Player 2 (Back Blocker) ---
+        elif my_unum == BACK_BLOCKER_UNUM:
+            # --- "BACK BLOCKER" LOGIC (Player 2) ---
+            # Stand 0.3m "behind" the spot (further from our net)
+
+            # Calculate the absolute angle to face our net
+            desired_orientation_degs = M.target_abs_angle(OPPONENT_5_SPOT, OUR_NET_POS)
+            
+            # Use point_in_direction: A negative distance moves *away* from the goal
+            # This calculates a spot 0.3m away from our net from the spot
+            player_2_target = strategyData.point_in_direction(
+                position=OPPONENT_5_SPOT, 
+                goal=OUR_NET_POS, 
+                distance=-0.33 # 0.3m "behind"
+            )
+            
+            strategyData.my_desired_position = player_2_target
+            drawer.annotation(tuple(player_2_target), f"BACK BLOCK (FACE NET)" , drawer.Color.cyan, "exploit")
+            
+            # Call move with the specific orientation, standing still
+            return self.move(
+                strategyData.my_desired_position, 
+                orientation=desired_orientation_degs, 
+                is_orientation_absolute=True,
+                avoid_obstacles=True,
+                is_aggressive=False, # Strictly stand there
+                timeout=999999
+            )
+        # --- END MODIFICATION ---
 
         # --- END OF "STALL" EXPLOIT LOGIC ---
         # Player 5 (always) and Player 3 (conditionally)
@@ -484,15 +589,19 @@ class Agent(Base_Agent):
                     strategyData.my_desired_orientation = strategyData.GetDirectionRelativeToMyPositionAndTarget(strategyData.ball_2d)  
         else:
             # --- FIX #3: "PLAYER 3 PUSH UP" LOGIC ---
-            is_finisher = (my_unum == 3 and strategyData.ball_2d[0] > 1.0)
+            # --- MODIFICATION: This logic is now only for Player 5 ---
+            is_attacker = (my_unum == 5) # Player 3 is now a blocker
             
-            if is_finisher:
-                # Override formation. Go to a "finisher spot"
-                # (1.5m behind the ball, on the far post y=1.5)
-                finisher_spot = (strategyData.ball_2d[0] - 1.5, 1.5)
-                strategyData.my_desired_position = finisher_spot
+            if is_attacker:
+                # This logic block won't run for P3, so we check formation
+                if strategyData.player_unum in point_preferences:
+                    # Use normal formation spot
+                    strategyData.my_desired_position = point_preferences[strategyData.player_unum]
+                else:
+                    # Fallback
+                    strategyData.my_desired_position = self.init_pos
             elif strategyData.player_unum in point_preferences:
-                # Use normal formation spot
+                # Use normal formation spot (for Player 5)
                 strategyData.my_desired_position = point_preferences[strategyData.player_unum]
             else:
                 # Fallback
@@ -521,17 +630,19 @@ class Agent(Base_Agent):
         else:
             if strategyData.player_unum in point_preferences:
                 # --- FIX #3: "PLAYER 3 PUSH UP" LOGIC (Repeated for this block) ---
-                is_finisher = (my_unum == 3 and strategyData.ball_2d[0] > 1.0)
+                # --- MODIFICATION: This logic is now only for Player 5 ---
+                is_attacker = (my_unum == 5) # Player 3 is now a blocker
                 
-                if is_finisher:
-                    finisher_spot = (strategyData.ball_2d[0] - 1.5, 1.5)
-                    strategyData.my_desired_position = finisher_spot
+                if is_attacker:
+                    strategyData.my_desired_position = point_preferences[strategyData.player_unum]
                 else:
                     strategyData.my_desired_position = point_preferences[strategyData.player_unum]
                 # --- END FIX #3 ---
             else:
                 strategyData.my_desired_position = self.init_pos
             return self.move(strategyData.my_desired_position, orientation=strategyData.ball_dir)
+
+
 
 
         
