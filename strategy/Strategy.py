@@ -271,7 +271,6 @@ class Strategy():
         norm_target_to_ball = np.linalg.norm(target_to_ball)
         norm_ball_to_mypos = np.linalg.norm(ball_to_myposition)
 
-        t
         if norm_target_to_ball == 0 or norm_ball_to_mypos == 0:
             return tuple(startat)
 
