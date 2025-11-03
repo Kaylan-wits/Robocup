@@ -251,20 +251,6 @@ class Agent(Base_Agent):
         ball_pos = strategyData.ball_2d
         ball_dist = strategyData.ball_dist
 
-        opp_keeper_pos = strategyData.opponent_positions[0]
-        TAP_IN_X_POS = 14.0
-        PUSH_DIST = 0.4
-
-        is_in_shoot_x_zone = my_pos[0] > X_POSITION_TO_SHOOT
-        is_at_goal_mouth = my_pos[0] > TAP_IN_X_POS
-        is_past_keeper = my_pos[0] > opp_keeper_pos[0]
-        has_ball = ball_dist <= PUSH_DIST
-
-        if is_at_goal_mouth and is_past_keeper and has_ball:
-            goal_dir = strategyData.GetDirectionRelativeToMyPositionAndTarget(
-                GOAL_POS)
-            return self.move(GOAL_POS, orientation=goal_dir, avoid_obstacles=False, timeout=999999)
-
         if my_pos[0] > X_POSITION_TO_SHOOT and ball_dist < 0.5:
             return self.kickTarget(strategyData, my_pos, GOAL_POS)
 
