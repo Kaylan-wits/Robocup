@@ -1,9 +1,9 @@
 import numpy as np
 import math
 
-# --- MODIFICATION: Set number of players to 5 ---
+
 NUM_PLAYERS = 5
-# --- END MODIFICATION ---
+
 
 def calculateEuclideanDistance(initialPos, formationPos):
     initialPosX, initialPosY = initialPos
@@ -19,13 +19,13 @@ def calculateEuclideanDistance(initialPos, formationPos):
 def findMinZeroRow(zeroMatrix, markedPositions):
     minRowInfo = [float('inf'), -1]
 
-    # --- MODIFICATION: Use NUM_PLAYERS ---
+    
     for rowIndex in range(NUM_PLAYERS): 
         zeroCount = np.sum(zeroMatrix[rowIndex])
         if zeroCount > 0 and zeroCount < minRowInfo[0]:
             minRowInfo = [zeroCount, rowIndex]
 
-    if minRowInfo[1] == -1: # No rows with zeros found
+    if minRowInfo[1] == -1: 
         return
 
     zeroColIndex = np.where(zeroMatrix[minRowInfo[1]])[0][0]
@@ -72,10 +72,10 @@ def modifyMatrix(matrix, coveredRows, coveredCols):
                 if c not in coveredCols:
                     nonZeroElements.append(modifiedMatrix[r, c])
     
-    # --- MODIFICATION: Handle case where no non-zero elements are found ---
+    
     if not nonZeroElements:
         return modifiedMatrix
-    # --- END MODIFICATION ---
+    
 
     smallestValue = min(nonZeroElements)
     for r in range(len(modifiedMatrix)):
@@ -94,24 +94,24 @@ def hungarianMethod(matrix):
     adjustedMatrix= adjustedMatrix-colMin
         
     totalZeros = 0
-    # --- MODIFICATION: Use NUM_PLAYERS ---
+    
     while totalZeros < NUM_PLAYERS:
         positions, markedRows, markedCols = identifyMarkedPositions(adjustedMatrix)
         totalZeros = len(markedRows) + len(markedCols)
 
         if totalZeros < NUM_PLAYERS:
-        # --- END MODIFICATION ---
+        
             adjustedMatrix = modifyMatrix(adjustedMatrix, markedRows, markedCols)
 
     return positions
 
 def role_assignment(initialPos, formation):
-    # --- MODIFICATION: Use NUM_PLAYERS ---
+    
     cost_matrix = np.zeros((NUM_PLAYERS, NUM_PLAYERS))
     
     for r in range(NUM_PLAYERS):
         for c in range(NUM_PLAYERS):
-    # --- END MODIFICATION ---
+    
             cost_matrix[r][c] = calculateEuclideanDistance(initialPos[r], formation[c])
     cost_copy = cost_matrix.copy()
     positions = hungarianMethod(cost_copy)
@@ -143,29 +143,29 @@ def pass_reciever_selector(player_unum, teammate_positions,opponent_positions,fi
     final_target_x = 15
     final_target_y = 0.5
     final_target = (final_target_x,final_target_y)
-    # Get the current position of the player
     
-    # --- MODIFICATION: Handle smaller team size ---
+    
+    
     if player_unum - 1 >= len(teammate_positions):
-         # This player doesn't exist in the list, return no target
+        
         return None, None
-    my_position = teammate_positions[player_unum - 1]   # Adjust for 0-indexing
-    # --- END MODIFICATION ---
+    my_position = teammate_positions[player_unum - 1]   
+    
 
-    # Finding the closest teammate ahead based on the calculated direction
+    
     teammateOptimal =[]
     optimal_player = None
     optimal_distance = float('inf')
     second_target=None
     for i, teammate_position in enumerate(teammate_positions):
-        # Skip the player themselves
+        
         if i == player_unum - 1:
             continue
         
-        # --- MODIFICATION: Ensure teammate_position is valid before subscripting ---
+        
         if teammate_position is None or my_position is None:
             continue
-        # --- END MODIFICATION ---
+        
 
         if (teammate_position[0] - my_position[0] >= 1.5):
             distance = calculateEuclideanDistance(my_position,teammate_position)
@@ -174,10 +174,10 @@ def pass_reciever_selector(player_unum, teammate_positions,opponent_positions,fi
             teammateOptimal.append((distance,teammate_position,i+1))
     teammateOptimal.sort(key=lambda x:x[0])
     
-    # --- MODIFICATION: Ensure my_position is valid ---
+    
     if my_position is None:
         return None, None
-    # --- END MODIFICATION ---
+    
 
     if final_target_x - my_position[0] <= 3.5 and -3 <= my_position[1] <= 3:  
         return final_target,second_target
@@ -207,13 +207,13 @@ def pass_reciever_selector(player_unum, teammate_positions,opponent_positions,fi
             target = None
             secondOptimal=[]
             for i, teammate_position in enumerate(teammate_positions):
-                # Skip the player themselves
+
                 if i == player_unum - 1:
                     continue
-                # --- MODIFICATION: Ensure positions are valid ---
+                
                 if teammate_position is None or my_position is None:
                     continue
-                # --- END MODIFICATION ---
+              
                 if (teammate_position[0] - my_position[0] >= -3):
                     distance = calculateEuclideanDistance(my_position,teammate_position)
                     distance = round(distance,0)
