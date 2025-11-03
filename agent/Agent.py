@@ -243,16 +243,16 @@ class Agent(Base_Agent):
 
     def customDribbleAndShoot(self, strategyData):
 
-        GOAL_POS = (15.5, -0.35)
-        X_POSITION_TO_SHOOT = 11.0
-        KICK_HERE = (15.5 , 0)
+        GOAL_POS = (14.9, -0.35)
+        X_POSITION_TO_SHOOT = 12.0
+        KICK_HERE = (14.9 , 0)
 
         my_pos = strategyData.mypos
         my_unum = strategyData.robot_model.unum
         ball_pos = strategyData.ball_2d
         ball_dist = strategyData.ball_dist
 
-        if my_pos[0] > X_POSITION_TO_SHOOT and ball_dist < 0.5:
+        if my_pos[0] > X_POSITION_TO_SHOOT and my_pos[1] < 3 and my_pos[1] > -3 and ball_dist < 0.5:
             return self.kickTarget(strategyData, my_pos, KICK_HERE)
 
         is_aligned = strategyData.are_points_collinear(
